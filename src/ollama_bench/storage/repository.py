@@ -125,6 +125,16 @@ class BenchmarkRepository:
         if "context_recommendation" not in cols:
             self._conn.execute("ALTER TABLE models ADD COLUMN context_recommendation TEXT")
 
+        pcols = [row[1] for row in self._conn.execute("PRAGMA table_info(plugins)").fetchall()]
+        for col, sql in (
+            ("latency_p50_ms", "REAL"),
+            ("time_to_first_token_p50_ms", "REAL"),
+            ("tokens_per_second", "REAL"),
+            ("cases_run", "INTEGER"),
+        ):
+            if col not in pcols:
+                self._conn.execute(f"ALTER TABLE plugins ADD COLUMN {col} {sql}")
+
     def close(self) -> None:
         self._conn.close()
 
@@ -171,7 +181,11 @@ class BenchmarkRepository:
             )
             for p in m.plugins:
                 cur.execute(
-                    "INSERT OR REPLACE INTO plugins VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    """INSERT OR REPLACE INTO plugins
+                    (run_id, model_name, plugin_id, total_cases, successful_cases,
+                     failed_cases, skipped_cases, score, metrics,
+                     latency_p50_ms, time_to_first_token_p50_ms, tokens_per_second, cases_run)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         result.run_id,
                         m.model_name,
@@ -182,6 +196,10 @@ class BenchmarkRepository:
                         p.skipped_cases,
                         p.score,
                         json.dumps(p.metrics, default=str),
+                        p.latency_p50_ms,
+                        p.time_to_first_token_p50_ms,
+                        p.tokens_per_second,
+                        p.cases_run,
                     ),
                 )
             for c in m.cases:
@@ -200,7 +218,7 @@ class BenchmarkRepository:
                         None if c.evaluation.passed is None else int(c.evaluation.passed),
                         c.evaluation.score,
                         c.response.text,
-                        c.response.error,
+                        c.response.error or (c.evaluation.metrics.get("error") if isinstance(c.evaluation.metrics, dict) else None),
                         c.response.timing.total_ms,
                         c.response.timing.time_to_first_token_ms,
                         c.response.tokens.tokens_per_second,
@@ -342,18 +360,97 @@ class BenchmarkRepository:
         ).fetchone()
         return _normalize_run(dict(row)) if row else None
 
-    def compare_models(self, run_id: str | None = None) -> list[dict[str, Any]]:
-        q = """
-        SELECT m.model_name, m.overall_score, m.latency_p50_ms, m.latency_p95_ms,
-               m.time_to_first_token_p50_ms, m.tokens_per_second, m.cases_run, m.errors
-        FROM models m
-        %s
-        ORDER BY m.overall_score DESC NULLS LAST, m.latency_p50_ms ASC NULLS LAST
+    def compare_models(
+        self, run_id: str | None = None, run_ids: list[str] | None = None
+    ) -> list[dict[str, Any]]:
+        """Models for a run (or multiple runs) with per-plugin aggregates.
+
+        Pass ``run_id`` for the legacy single-run path, or ``run_ids`` for a
+        cross-run comparison. Each returned row carries a ``run_id`` column, a
+        ``run_created_at`` column (when multi-run), and a ``plugins`` array of
+        per-plugin score/latency stats.
         """
-        params: list[Any] = []
-        where = ""
-        if run_id:
-            where = "WHERE m.run_id = ?"
-            params.append(run_id)
-        cur = self._conn.execute(q % where, params)
+        rows = self._select_models(run_id=run_id, run_ids=run_ids)
+        multi = bool(run_ids)
+        if multi:
+            # run_created_at already selected by _select_models for the multi case.
+            pass
+        else:
+            run_ids_resolved = [run_id] if run_id else None
+            if run_ids_resolved is None:
+                # No scoping: attach empty plugins (no run context available).
+                for row in rows:
+                    row.setdefault("run_id", None)
+                    row["plugins"] = []
+                return rows
+        # Attach per-plugin aggregates (with latency) for each model/run.
+        for row in rows:
+            row["plugins"] = self._plugin_aggregates(row["run_id"], row["model_name"])
+        return rows
+
+    def _select_models(
+        self, run_id: str | None = None, run_ids: list[str] | None = None
+    ) -> list[dict[str, Any]]:
+        if run_ids:
+            placeholders = ",".join(["?"] * len(run_ids))
+            where = f"m.run_id IN ({placeholders})"
+            select = (
+                "m.run_id AS run_id, r.timestamp AS run_created_at, "
+                "m.model_name, m.overall_score, m.latency_p50_ms, m.latency_p95_ms, "
+                "m.time_to_first_token_p50_ms, m.tokens_per_second, m.cases_run, m.errors"
+            )
+            from_clause = "FROM models m JOIN runs r ON r.run_id = m.run_id"
+            params: list[Any] = list(run_ids)
+        elif run_id:
+            where = "m.run_id = ?"
+            select = (
+                "m.run_id AS run_id, "
+                "m.model_name, m.overall_score, m.latency_p50_ms, m.latency_p95_ms, "
+                "m.time_to_first_token_p50_ms, m.tokens_per_second, m.cases_run, m.errors"
+            )
+            from_clause = "FROM models m"
+            params = [run_id]
+        else:
+            where = ""
+            select = (
+                "m.run_id AS run_id, "
+                "m.model_name, m.overall_score, m.latency_p50_ms, m.latency_p95_ms, "
+                "m.time_to_first_token_p50_ms, m.tokens_per_second, m.cases_run, m.errors"
+            )
+            from_clause = "FROM models m"
+            params = []
+        where_clause = f"WHERE {where}" if where else ""
+        q = (
+            f"SELECT {select} {from_clause} {where_clause} "
+            "ORDER BY m.overall_score DESC NULLS LAST, m.latency_p50_ms ASC NULLS LAST"
+        )
+        cur = self._conn.execute(q, params)
+        return [dict(row) for row in cur.fetchall()]
+
+    def _plugin_aggregates(self, run_id: str, model_name: str) -> list[dict[str, Any]]:
+        cur = self._conn.execute(
+            """
+            SELECT plugin_id, score, latency_p50_ms, time_to_first_token_p50_ms,
+                   tokens_per_second, cases_run
+            FROM plugins
+            WHERE run_id = ? AND model_name = ?
+            ORDER BY plugin_id
+            """,
+            (run_id, model_name),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+    def cases_for_run(self, run_id: str) -> list[dict[str, Any]]:
+        """Per-case rows for a run, including error text (transport + evaluate)."""
+        cur = self._conn.execute(
+            """
+            SELECT c.model_name, c.plugin_id, c.case_id, c.passed, c.score,
+                   c.error, c.total_ms, c.time_to_first_token_ms,
+                   c.tokens_per_second, c.prompt_tokens, c.completion_tokens, c.attempt
+            FROM cases c
+            WHERE c.run_id = ?
+            ORDER BY c.model_name, c.plugin_id, c.case_id
+            """,
+            (run_id,),
+        )
         return [dict(row) for row in cur.fetchall()]

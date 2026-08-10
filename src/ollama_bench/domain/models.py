@@ -106,6 +106,11 @@ class PluginAggregate(BaseModel):
     skipped_cases: int = 0
     score: float | None = None
     metrics: dict[str, Any] = Field(default_factory=dict)
+    latency_p50_ms: float | None = None
+    latency_p95_ms: float | None = None
+    time_to_first_token_p50_ms: float | None = None
+    tokens_per_second: float | None = None
+    cases_run: int = 0
 
 
 class ModelBenchmarkResult(BaseModel):

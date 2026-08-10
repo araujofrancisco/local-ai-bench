@@ -170,6 +170,9 @@ async def _run_model(
         )
         case_results: list[CaseResult] = []
         failed_reason: str | None = None
+        p_lat: list[float] = []
+        p_ttft: list[float] = []
+        p_tps: list[float] = []
 
         try:
             await plugin.prepare(ctx)
@@ -197,10 +200,13 @@ async def _run_model(
                         continue
                     if resp.timing.total_ms:
                         latencies_ms.append(resp.timing.total_ms)
+                        p_lat.append(resp.timing.total_ms)
                     if resp.timing.time_to_first_token_ms is not None:
                         ttft_ms.append(resp.timing.time_to_first_token_ms)
+                        p_ttft.append(resp.timing.time_to_first_token_ms)
                     if resp.tokens.tokens_per_second is not None:
                         tps.append(resp.tokens.tokens_per_second)
+                        p_tps.append(resp.tokens.tokens_per_second)
                     completion_tokens += resp.tokens.completion_tokens or 0
                     orchestrator.emit(
                         Event(Events.CASE_COMPLETED, case_id=case.id, data={"ms": resp.timing.total_ms})
@@ -225,6 +231,15 @@ async def _run_model(
             except Exception as exc:  # noqa: BLE001 - teardown must not mask results
                 log.warning("teardown failed for %s: %s", plugin.id, exc)
 
+        # Per-plugin latency/ttft/tokens aggregates (from successful cases only).
+        try:
+            agg.latency_p50_ms = _pct(p_lat, 0.5)
+            agg.latency_p95_ms = _pct(p_lat, 0.95)
+            agg.time_to_first_token_p50_ms = _pct(p_ttft, 0.5)
+            agg.tokens_per_second = statistics.mean(p_tps) if p_tps else None
+            agg.cases_run = len(p_lat)
+        except Exception:  # noqa: BLE001 - never mask orchestration on a stats bug
+            pass
         summary.plugins.append(agg)
         summary.cases.extend(case_results)
         if agg.score is not None:

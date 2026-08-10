@@ -25,7 +25,6 @@ hosts:
 
 plugins:
   enabled:
-    # Implemented benchmark plugins:
     - smoke
     - reasoning
     - translation
@@ -33,11 +32,16 @@ plugins:
     - structured_output
     - coding
     - vision
+    - keyword
     - long_context
     - multi_context
   # Directory scanned for extra local plugins (.py files). Inside the Docker
   # container this is the mounted host directory ./plugins -> /plugins.
   local_dir: /plugins
+  # Plugin ids whose per-plugin score column appears by default on the Compare
+  # page. Leave empty ([]) to show a score column for every enabled plugin that
+  # ran; list specific ids to limit which columns appear by default.
+  compare_default: []
   options:
     coding:
       execute_code: false

@@ -28,6 +28,9 @@ class PluginConfig(BaseModel):
     enabled: list[str] = Field(default_factory=list)
     local_dir: str = "./plugins"
     options: PluginOptions = Field(default_factory=PluginOptions)
+    # Plugin ids whose per-plugin score column should appear by default on the
+    # Compare page. Empty => all run plugins' score columns are shown by default.
+    compare_default: list[str] = Field(default_factory=list)
 
 
 class RunnerConfig(BaseModel):

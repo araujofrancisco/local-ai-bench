@@ -18,7 +18,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
@@ -49,6 +49,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Ensure orchestrator warnings are captured to disk, not only stderr, when
+# running under the FastAPI/uvicorn process. Safe to call multiple times.
+from ollama_bench.utils.logging import setup_logging  # noqa: E402
+
+setup_logging()
 
 
 def _load_cfg() -> BenchmarkConfig:
@@ -350,7 +356,7 @@ async def list_plugins() -> dict[str, Any]:
     reg = registry()
     effective = _effective_plugin_options(cfg)
     plugins = [_plugin_record(pid, cls, effective) for pid in reg.ids() if (cls := reg.get(pid))]
-    return {"plugins": plugins}
+    return {"plugins": plugins, "compare_default": cfg.plugins.compare_default}
 
 
 @app.get("/api/plugins/{plugin_id}")
@@ -578,14 +584,28 @@ async def get_run_status(run_id: str) -> dict[str, Any]:
     return status.to_message()
 
 
+@app.get("/api/benchmarks/{run_id}/cases")
+async def get_run_cases(run_id: str) -> dict[str, Any]:
+    """Return the persisted per-case rows for a completed run (including errors)."""
+    repo = BenchmarkRepository(_db_path)
+    try:
+        rows = repo.cases_for_run(run_id)
+        return {"run_id": run_id, "count": len(rows), "cases": rows}
+    finally:
+        repo.close()
+
+
 # ---------- Compare ----------
 
 
 @app.get("/api/compare")
-async def compare_models(run_id: str | None = None) -> dict[str, Any]:
+async def compare_models(request: Request) -> dict[str, Any]:
+    # Support both ?run=A&run=B (multiple) and ?run=A (single/legacy).
+    run_ids = list(request.query_params.getlist("run")) or None
     repo = BenchmarkRepository(_db_path)
     try:
-        return {"models": repo.compare_models(run_id=run_id)}
+        rows = repo.compare_models(run_ids=run_ids)
+        return {"models": rows}
     finally:
         repo.close()
 

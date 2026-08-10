@@ -62,6 +62,7 @@ const API = {
       { id: 'smoke', name: 'Smoke / generation', description: 'Fast sanity check.', category: 'reasoning', version: '0.1.0', dataset_version: 'v1', modalities: ['text'], options: {} },
       { id: 'keyword', name: 'Keyword presence', description: 'Checks for expected keywords.', category: 'reasoning', version: '0.1.0', dataset_version: 'v1', modalities: ['text'], options: { max_hits: 3 } },
     ],
+    compare_default: [],
   },
   '/api/benchmarks': {
     runs: [{ run_id: 'r1', timestamp: '2026-01-01T00:00:00Z', app_version: '0.1.0', model_names: ['m1'], hosts: [{ name: 'lab-server' }] }],
@@ -73,9 +74,33 @@ const API = {
   '/api/compare': {
     models: [{ model_name: 'm1', overall_score: 0.9, latency_p50_ms: 10, latency_p95_ms: 20, time_to_first_token_p50_ms: 5, tokens_per_second: 50, cases_run: 2, errors: 0 }],
   },
+  '/api/compare?run=r1': {
+    models: [
+      { model_name: 'm1', run_id: 'r1', overall_score: 0.9,
+        latency_p50_ms: 10, latency_p95_ms: 20, time_to_first_token_p50_ms: 5,
+        tokens_per_second: 50, cases_run: 2, errors: 0,
+        plugins: [
+          { plugin_id: 'smoke', score: 0.9, latency_p50_ms: 10, time_to_first_token_p50_ms: 5, tokens_per_second: 50, cases_run: 2 },
+        ] },
+    ],
+  },
+  '/api/compare?run=r1&run=r2': {
+    models: [
+      { model_name: 'm1', run_id: 'r1', overall_score: 0.9, latency_p50_ms: 10, latency_p95_ms: 20, time_to_first_token_p50_ms: 5, tokens_per_second: 50, cases_run: 2, errors: 0, plugins: [{ plugin_id: 'smoke', score: 0.9, latency_p50_ms: 10, time_to_first_token_p50_ms: 5, tokens_per_second: 50, cases_run: 2 }] },
+      { model_name: 'm2', run_id: 'r2', overall_score: 0.8, latency_p50_ms: 30, latency_p95_ms: 40, time_to_first_token_p50_ms: 15, tokens_per_second: 20, cases_run: 2, errors: 0, plugins: [{ plugin_id: 'smoke', score: 0.8, latency_p50_ms: 30, time_to_first_token_p50_ms: 15, tokens_per_second: 20, cases_run: 2 }] },
+    ],
+  },
   '/api/benchmarks/r1': {
     run: { run_id: 'r1' },
-    models: [{ model_name: 'm1', overall_score: 0.9, latency_p50_ms: 10, latency_p95_ms: 20, time_to_first_token_p50_ms: 5, tokens_per_second: 50, cases_run: 2, errors: 0 }],
+    models: [{ model_name: 'm1', overall_score: 0.9, latency_p50_ms: 10, latency_p95_ms: 20, time_to_first_token_p50_ms: 5, tokens_per_second: 50, cases_run: 2, errors: 0, plugins: [{ plugin_id: 'smoke', score: 0.9, latency_p50_ms: 10, time_to_first_token_p50_ms: 5, tokens_per_second: 50, cases_run: 2 }] }],
+  },
+  '/api/benchmarks/r1/cases': {
+    run_id: 'r1', count: 1,
+    cases: [{ model_name: 'm1', plugin_id: 'smoke', case_id: 'c1', passed: 1, score: 1.0, error: null, total_ms: 10, time_to_first_token_ms: 5, tokens_per_second: 50, prompt_tokens: 3, completion_tokens: 5, attempt: 1 }],
+  },
+  '/api/benchmarks/r2': {
+    run: { run_id: 'r2' },
+    models: [{ model_name: 'm2', overall_score: 0.8, latency_p50_ms: 30, latency_p95_ms: 40, time_to_first_token_p50_ms: 15, tokens_per_second: 20, cases_run: 2, errors: 0, plugins: [{ plugin_id: 'smoke', score: 0.8, latency_p50_ms: 30, time_to_first_token_p50_ms: 15, tokens_per_second: 20, cases_run: 2 }] }],
   },
   '/api/benchmarks/active': {
     runs: [
@@ -119,18 +144,19 @@ function loadPage(relPath, url, opts = {}) {
     url: url || `http://localhost:8000/${relPath}`,
     runScripts: 'outside-only',
     beforeParse(window) {
-      window.fetch = async (input) => {
-        const key = typeof input === 'string' ? input : input.url;
-        if (key in API) return { ok: true, json: async () => API[key] };
-        if (NOT_FOUND.has(key)) return { ok: false, status: 404, json: async () => ({ detail: 'not found' }) };
-        return { ok: false, json: async () => ({}) };
-      };
-      window.WebSocket = class { constructor() {} close() {} onmessage = null; onerror = null; };
-      window.alert = () => {};
-      window.confirm = () => true;
-      window.__intervals = [];
-      window.setInterval = (fn) => { window.__intervals.push(fn); return window.__intervals.length; };
-      window.clearInterval = () => {};
+       window.fetch = async (input) => {
+         const key = typeof input === 'string' ? input : input.url;
+         if (key in API) return { ok: true, json: async () => API[key] };
+         if (NOT_FOUND.has(key)) return { ok: false, status: 404, json: async () => ({ detail: 'not found' }) };
+         console.error('DEBUG fetch unmatched:', key);
+         return { ok: false, json: async () => ({}) };
+       };
+       window.WebSocket = class { constructor() {} close() {} onmessage = null; onerror = null; };
+       window.alert = () => {};
+       window.confirm = () => true;
+       window.__intervals = [];
+       window.setInterval = (fn) => { window.__intervals.push(fn); return window.__intervals.length; };
+       window.clearInterval = () => {};
     },
   });
   for (const [key, value] of Object.entries(opts.storage || {})) {
@@ -159,6 +185,7 @@ const results = await Promise.all([
   loadPage('history/index.html'),
   loadPage('compare/index.html', 'http://localhost:8000/compare/'),
   loadPage('compare/index.html', 'http://localhost:8000/compare/?run=r1'),
+  loadPage('compare/index.html', 'http://localhost:8000/compare/?run=r1&run=r2'),
   loadPage('run/index.html', 'http://localhost:8000/run/'),
   loadPage('run/index.html', 'http://localhost:8000/run/', { storage: { 'ollama-bench.active-run': 'running1' } }),
   loadPage('run/index.html', 'http://localhost:8000/run/', { storage: { 'ollama-bench.active-run': 'done1' } }),
@@ -167,7 +194,7 @@ const results = await Promise.all([
 ]);
 await wait(150);
 
-const [d1, d2, d3, d4, d5, d6, d7, d8, d9, d10] = results;
+const [d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11] = results;
 
 assert('index: stat-models = 2', d1.getElementById('stat-models').textContent === '2');
 assert('index: stat-runs = 1', d1.getElementById('stat-runs').textContent === '1');
@@ -190,27 +217,37 @@ assert('history: filter bar present', d3.getElementById('f-search') !== null && 
 assert('history: row checkboxes present', d3.querySelector('.row-check') !== null);
 assert('history: select-all checkbox present', d3.querySelector('#select-all') !== null);
 assert('history: batch delete button present', d3.querySelector('#bulk-delete') !== null);
+assert('history: compare selected button present', d3.querySelector('#bulk-compare') !== null);
+assert('history: compare per-row link removed', d3.querySelector('a[href^="/compare?run="]') === null);
 assert('history: active run merged', d3.getElementById('history').textContent.includes('running1'));
 
+assert('compare: column panel present', d4.getElementById('column-list-inner') !== null);
 assert('compare: model row', d4.getElementById('compare').textContent.includes('m1'));
 assert('compare: score shown', d4.getElementById('compare').textContent.includes('0.900'));
-assert('compare?run=r1: model row', d5.getElementById('compare').textContent.includes('m1'));
+assert('compare: tooltip glyph is i', d5.querySelector('th[title]') !== null && !d5.querySelector('th[title]').textContent.includes('?'));
 assert('compare?run=r1: delete run button present', d5.querySelector('button[data-delete-run]') !== null);
+assert('compare: column toggle checkboxes present', d5.querySelectorAll('input[data-col]').length >= 9);
+assert('compare: show-errors button present', d5.querySelector('button#show-errors') !== null);
+assert('compare?run=r1: per-plugin columns built', d5.getElementById('compare').textContent.includes('smoke score'));
 
-assert('run: no script error', !d6.title.startsWith('SCRIPT ERROR'));
-assert('run: form visible', d6.getElementById('benchmark-form').style.display === 'block');
-const opts = Array.from(d6.querySelectorAll('#models option')).map((o) => o.value);
+assert('compare multi-run: both models', d6.getElementById('compare').textContent.includes('m1') && d6.getElementById('compare').textContent.includes('m2'));
+assert('compare multi-run: run column shown', d6.getElementById('compare').textContent.includes('r1') && d6.getElementById('compare').textContent.includes('r2'));
+assert('compare multi-run: delete runs button present', d6.querySelector('button[data-delete-run]') !== null);
+
+assert('run: no script error', !d7.title.startsWith('SCRIPT ERROR'));
+assert('run: form visible', d7.getElementById('benchmark-form').style.display === 'block');
+const opts = Array.from(d7.querySelectorAll('#models option')).map((o) => o.value);
 assert('run: model options = 2', opts.length === 2 && opts.includes('qwen3.5:0.8b'));
-assert('run: plugin checkboxes = 2', d6.querySelectorAll('#plugin-list input[type=checkbox]').length === 2);
-assert('run: loading hidden', d6.getElementById('loading').style.display === 'none');
+assert('run: plugin checkboxes = 2', d7.querySelectorAll('#plugin-list input[type=checkbox]').length === 2);
+assert('run: loading hidden', d7.getElementById('loading').style.display === 'none');
 
-assert('resume: running -> progress visible', d7.getElementById('progress').style.display === 'block');
-assert('resume: running -> poller scheduled', d7.defaultView.__intervals.length >= 1);
-assert('resume: completed -> result shown', d8.getElementById('results').textContent.includes('Benchmark completed'));
-assert('resume: unknown -> form visible', d9.getElementById('benchmark-form').style.display === 'block');
-assert('resume: unknown -> key cleared', d9.defaultView.localStorage.getItem('ollama-bench.active-run') === null);
+assert('resume: running -> progress visible', d8.getElementById('progress').style.display === 'block');
+assert('resume: running -> poller scheduled', d8.defaultView.__intervals.length >= 1);
+assert('resume: completed -> result shown', d9.getElementById('results').textContent.includes('Benchmark completed'));
+assert('resume: unknown -> form visible', d10.getElementById('benchmark-form').style.display === 'block');
+assert('resume: unknown -> key cleared', d10.defaultView.localStorage.getItem('ollama-bench.active-run') === null);
 
-assert('resume from ?run=: progress visible', d10.getElementById('progress').style.display === 'block');
-assert('resume from ?run=: poller scheduled', d10.defaultView.__intervals.length >= 1);
+assert('resume from ?run=: progress visible', d11.getElementById('progress').style.display === 'block');
+assert('resume from ?run=: poller scheduled', d11.defaultView.__intervals.length >= 1);
 
 console.log(process.exitCode ? '\nSome checks FAILED' : '\nAll page checks passed');

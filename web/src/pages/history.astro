@@ -22,6 +22,7 @@ import MainLayout from '../layouts/MainLayout.astro';
 
   <div id="bulk-bar" style="display:none; align-items:center; gap:1rem; background:#1e293b; padding:.75rem 1rem; border-radius:.5rem; border:1px solid #7c3aed; margin-bottom:1rem;">
     <span id="bulk-count" style="color:#cbd5e1; font-size:.9rem;"></span>
+    <button id="bulk-compare" style="background:#3b82f6; color:#fff; border:none; padding:.375rem .875rem; border-radius:.375rem; cursor:pointer; font-size:.875rem;">Compare selected</button>
     <button id="bulk-delete" style="background:#ef4444; color:#fff; border:none; padding:.375rem .875rem; border-radius:.375rem; cursor:pointer; font-size:.875rem;">Delete Selected</button>
     <button id="bulk-clear" style="background:transparent; color:#94a3b8; border:1px solid #334155; padding:.375rem .875rem; border-radius:.375rem; cursor:pointer; font-size:.875rem;">Clear</button>
   </div>
@@ -75,8 +76,7 @@ import MainLayout from '../layouts/MainLayout.astro';
                 <td style="text-align:right; padding:1rem; white-space:nowrap;">
                   ${isActive
                     ? `<a href="/run?run=${esc(run.run_id)}" style="color:#3b82f6; text-decoration:none; font-weight:500; margin-right:1rem;">Track</a>`
-                    : `<a href="/compare?run=${esc(run.run_id)}" style="color:#3b82f6; text-decoration:none; margin-right:1rem;">Compare</a>
-                       <button data-delete="${esc(run.run_id)}" style="background:transparent; color:#ef4444; border:1px solid #7f1d1d; padding:.25rem .625rem; border-radius:.375rem; cursor:pointer; font-size:.875rem;">Delete</button>`}
+                    : `<button data-delete="${esc(run.run_id)}" style="background:transparent; color:#ef4444; border:1px solid #7f1d1d; padding:.25rem .625rem; border-radius:.375rem; cursor:pointer; font-size:.875rem;">Delete</button>`}
                 </td>
               </tr>`;
             }).join('')}
@@ -249,6 +249,11 @@ import MainLayout from '../layouts/MainLayout.astro';
 
     document.getElementById('bulk-delete').addEventListener('click', () => {
       if (selected.size) deleteRuns(Array.from(selected));
+    });
+    document.getElementById('bulk-compare').addEventListener('click', () => {
+      if (!selected.size) return;
+      const qs = Array.from(selected).map((id) => 'run=' + encodeURIComponent(id)).join('&');
+      location.href = `/compare?${qs}`;
     });
     document.getElementById('bulk-clear').addEventListener('click', () => {
       selected.clear();

@@ -37,6 +37,14 @@ SQLite for comparison. It ships with both a terminal CLI and a web UI
   (active runs are protected with a 409). See running runs with status chips.
 - **Reports & exports** — JSON/Markdown/HTML reports and per-run
   `json|csv|md` exports.
+- **Per-case error logging** — failed cases (transport + evaluation) are captured
+  in SQLite with full error text; view them via the Compare page's "Show per-case
+  errors" panel or `GET /api/benchmarks/{id}/cases`.
+- **Multi-run comparison** — select multiple runs from History → **Compare
+  selected**; the Compare page shows a unified table with a Run column, per-plugin
+  score columns, click-to-sort, and column show/hide toggles.
+- **Configurable default plugin columns** — `plugins.compare_default` controls
+  which per-plugin score columns appear by default.
 - **Retries and error isolation** — a failed case, plugin, or host never aborts
   the whole run.
 

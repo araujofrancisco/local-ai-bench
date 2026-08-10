@@ -115,9 +115,9 @@ The UI is served at the backend root (default `http://localhost:8000`).
 | --- | --- | --- |
 | Dashboard | `/` | Model overview, recent runs (with delete), and a live **Active Runs** panel |
 | Run | `/run` | Select models + plugins and start a benchmark; live progress + resume |
-| Compare | `/compare` | Side-by-side model comparison (`?run=<id>` for one run, with a delete action) |
+| Compare | `/compare` | Side-by-side multi-run comparison. Pick runs from History → **Compare selected**, or visit `/compare?run=A&run=B`. Sort any column, show/hide columns, and expand per-plugin score/latency columns. |
 | History | `/history` | All runs, with multi-criteria filtering, running-status chips, and single/bulk deletion |
-| Plugins | `/plugins` | Plugin details and option editing |
+| Plugins | `/plugins` | Plugin details, source viewer, and option editing |
 
 ### Run page
 
@@ -157,6 +157,31 @@ completed runs remain in the database.
 - **Bulk delete**: tick the checkbox per row (or the header checkbox to select
   all visible), then **Delete Selected**. Active runs cannot be selected.
 - A toast confirms each successful deletion; errors are shown inline as a toast.
+
+To compare runs, select one or more completed rows with the checkboxes and click
+**Compare selected**. This opens `/compare?run=<r1>&run=<r2>…` (active runs are
+excluded from selection).
+
+### Compare page
+
+`/compare` shows a sortable, customizable table:
+
+- **Sort** — click any numeric column header to sort ascending/descending (the
+  active column shows `▲/▼`). Sort choice is remembered between visits.
+- **Columns** — click the **Columns** panel to toggle individual columns on/off.
+  Columns include general metrics (Model, Score, p50, p95, TTFT, Tokens/s, Cases,
+  Errors) and **a score column per plugin** that ran in the selected runs. Toggle
+  extra per-plugin latency/TTFT/throughput columns (e.g. `smoke p50`,
+  `translation Tokens/s`). Your column choices persist across reloads.
+- **Per-plugin columns by default** — which plugin score columns appear by default
+  is controlled by `plugins.compare_default` in `config/default.yaml`. Leave it
+  empty (`[]`) to show a score column for every enabled plugin; list specific ids
+  to limit the default set (e.g. `compare_default: [translation, coding]`).
+- **Per-case errors** — click **Show per-case errors** to expand a table listing
+  each failed case (model, plugin, case id, and the error message) for the
+  selected run(s). The same detail is persisted in SQLite and available via
+  `GET /api/benchmarks/{run_id}/cases`. Tool/transport failures and
+  `evaluate()` exceptions both populate the `error` field.
 
 ### Plugins page
 
@@ -232,7 +257,7 @@ Base URL: `http://<host>:8000`. Interactive OpenAPI docs at `/docs`.
 | Method | Path | Description |
 | --- | --- | --- |
 | GET | `/api/models` | Discovered models |
-| GET | `/api/plugins` | Plugins with description, dataset version, modalities, effective options |
+| GET | `/api/plugins` | Plugins with description, dataset version, modalities, effective options, and `compare_default` (ids shown by default on Compare) |
 | GET | `/api/plugins/{id}` | Plugin detail incl. `source_file` and base64-encoded `source` |
 | PUT | `/api/plugins/{id}/options` | Persist option overrides for a plugin |
 | POST | `/api/benchmarks/run` | Start a benchmark run (runs in the background) |
@@ -240,6 +265,7 @@ Base URL: `http://<host>:8000`. Interactive OpenAPI docs at `/docs`.
 | GET | `/api/benchmarks/active` | Live pending/running runs (in-memory; not persisted) |
 | GET | `/api/benchmarks/{run_id}` | Run metadata + per-model results |
 | GET | `/api/benchmarks/{run_id}/status` | Live progress/status (retained briefly after completion) |
+| GET | `/api/benchmarks/{run_id}/cases` | Per-case rows for a run, including error text (transport + evaluate failures) |
 | DELETE | `/api/benchmarks/{run_id}` | Delete a run (cascades all its data). **409** if the run is still active |
 | POST | `/api/benchmarks/delete` | Batch delete (body `{"run_ids":[...]}`). **409** if any id is still active |
 | GET | `/api/compare` | Compare models (`?run=<id>` optional) |

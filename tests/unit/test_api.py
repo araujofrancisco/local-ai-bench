@@ -251,6 +251,64 @@ def test_api_get_benchmark_found_and_missing() -> None:
         assert missing.status_code == 404
 
 
+def test_api_benchmark_detail_includes_per_plugin_aggregates() -> None:
+    with TestClient(app) as client:
+        resp = client.get("/api/benchmarks/run123")
+        assert resp.status_code == 200
+        model = resp.json()["models"][0]
+        assert "plugins" in model
+        plugins = model["plugins"]
+        assert plugins and plugins[0]["plugin_id"] == "smoke"
+        assert "latency_p50_ms" in plugins[0]
+        assert "time_to_first_token_p50_ms" in plugins[0]
+        assert "tokens_per_second" in plugins[0]
+
+
+def test_api_compare_multi_run_with_run_column() -> None:
+    # Seed a second run, then compare both runs at once.
+    repo = BenchmarkRepository(_TMP_DB)
+    repo.save_run(_make_run("run-multi", "m2", "h1", "2026-01-02T00:00:00Z"))
+    repo.close()
+    with TestClient(app) as client:
+        resp = client.get("/api/compare?run=run123&run=run-multi")
+        assert resp.status_code == 200
+        models = resp.json()["models"]
+        run_ids = {m["run_id"] for m in models}
+        assert {"run123", "run-multi"} <= run_ids
+        # Each row carries a run_id and per-plugin aggregates.
+        for m in models:
+            assert m["plugins"]
+            assert "latency_p50_ms" in m["plugins"][0]
+
+
+def test_api_benchmark_cases_endpoint() -> None:
+    with TestClient(app) as client:
+        resp = client.get("/api/benchmarks/run123/cases")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["run_id"] == "run123"
+        assert body["count"] == 1
+        case = body["cases"][0]
+        for field in (
+            "model_name", "plugin_id", "case_id", "passed", "score",
+            "total_ms", "time_to_first_token_ms", "tokens_per_second", "error",
+        ):
+            assert field in case
+        missing = client.get("/api/benchmarks/does-not-exist/cases")
+        assert missing.status_code == 200
+        assert missing.json()["count"] == 0
+
+
+def test_api_plugins_compare_default() -> None:
+    with TestClient(app) as client:
+        resp = client.get("/api/plugins")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "compare_default" in body
+        assert isinstance(body["compare_default"], list)
+        assert any(p["id"] == "smoke" for p in body["plugins"])
+
+
 def test_api_export_formats() -> None:
     with TestClient(app) as client:
         for fmt in ("json", "csv", "md"):

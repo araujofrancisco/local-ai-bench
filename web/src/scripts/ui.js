@@ -42,6 +42,35 @@ export function toast(message, type = 'info') {
 }
 
 /**
+ * Render a table header cell with an inline info hint.
+ * The hint uses an 'i' glyph in a filled, distinct background so it stands out.
+ * Pass `sortable` + `sortKey`/`sortDir` for click-to-sort support.
+ */
+export function thInfo(label, align = 'right', hint = '', { sortable = false, sortKey = null, sortDir = null } = {}) {
+  const sort = sortable
+    ? (sortKey && sortDir === 'desc' ? ' ▼' : sortKey && sortDir === 'asc' ? ' ▲' : '')
+    : '';
+  const hintHtml = hint
+    ? `<span aria-label="${esc(hint)}" style="display:inline-flex;align-items:center;justify-content:center;width:1.15rem;height:1.15rem;border-radius:50%;color:#ffffff;font-size:.7rem;background:#475569;border:1px solid #64748b;margin-left:.35rem;cursor:help;">i</span>`
+    : '';
+  const cursor = sortable ? 'cursor:pointer' : 'cursor:default';
+  return `<th title="${esc(hint || '')}" style="text-align:${align}; padding:1rem; color:#94a3b8; font-weight:500; ${cursor};" data-sort="${esc(sortKey || '')}">${esc(label)}${sort}${hintHtml}</th>`;
+}
+
+/** Format a number or null-ish value. `null` renders as '-'. */
+export function formatNum(value, decimals = 1) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '-';
+  return Number(value).toFixed(decimals);
+}
+
+/** Color a pass-rate/percentage value (0-1 or 0-100 scale via opts). */
+export function scoreColor(value) {
+  const v = Number(value);
+  if (Number.isNaN(v)) return 'inherit';
+  return v >= 0.8 ? '#10b981' : v >= 0.5 ? '#f59e0b' : '#ef4444';
+}
+
+/**
  * Ask for confirmation with an accessible modal. Resolves to a boolean.
  * Closes on Cancel, overlay click, or Escape; focuses the confirm button.
  */

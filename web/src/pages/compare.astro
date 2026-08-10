@@ -6,66 +6,185 @@ import MainLayout from '../layouts/MainLayout.astro';
 
   <div id="error" style="display: none; background: #ef4444; color: white; padding: 1rem; border-radius: 0.5rem; margin-bottom: 2rem;"></div>
 
+  <!-- Column customization panel -->
+  <div id="column-panel">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:.5rem;">
+      <div style="display:flex; align-items:center; gap:.5rem;">
+        <span style="color:#e2e8f0; font-size:.9rem; font-weight:500;">Columns</span>
+        <button id="toggle-columns" type="button" style="background:#0f172a; color:#94a3b8; border:1px solid #334155; border-radius:.25rem; padding:.15rem .5rem; cursor:pointer; font-size:.75rem;">▾</button>
+        <button id="reset-columns" type="button" style="background:transparent; color:#94a3b8; border:1px solid #334155; border-radius:.25rem; padding:.15rem .5rem; cursor:pointer; font-size:.75rem;">Reset</button>
+      </div>
+    </div>
+    <div id="column-list-inner" style="display:none; flex-wrap:wrap; gap:.5rem;"></div>
+  </div>
+
   <div id="compare">
     <p style="color: #94a3b8;">Loading comparison…</p>
   </div>
 
   <script>
-    import { esc, toast, confirmModal } from '../scripts/ui.js';
-
-    const fmt = (v, d) => (v === null || v === undefined ? '-' : Number(v).toFixed(d));
-
-    const scoreColor = (s) =>
-      s === null || s === undefined ? 'inherit' : s >= 0.8 ? '#10b981' : s >= 0.5 ? '#f59e0b' : '#ef4444';
+    import { esc, toast, confirmModal, thInfo, formatNum, scoreColor } from '../scripts/ui.js';
 
     const HINTS = {
+      'Model': 'Model name (also includes the Run when comparing multiple runs).',
+      'Run': 'Benchmark run this model belongs to (only shown for multi-run comparisons).',
+      'Score': 'Weighted mean of plugin scores (higher is better).',
       'p50 (ms)': 'Median generation latency — half of generations finish faster, half slower.',
       'p95 (ms)': 'Tail latency: 95% of generations finish within this time. Sensitive to slow decodes/outliers.',
-      'TTFT p50': 'Median time to first token — measures prompt processing + first-token latency (server load, context length).',
+      'TTFT p50': 'Median time to first token — measures prompt processing + first-token latency.',
       'Tokens/s': 'Output tokens generated per second (throughput).',
-      'Score': 'Weighted mean of plugin scores (higher is better).',
+      'Cases': 'Number of benchmark cases that completed.',
+      'Errors': 'Number of failed cases for this model.',
     };
 
-    // Render a header cell with an inline '?' tooltip hint.
-    const th = (label, align = 'right') => {
-      const hint = HINTS[label];
-      return `<th title="${hint}" style="text-align:${align}; padding:1rem; color:#94a3b8; font-weight:500;">
-        ${label}${hint ? `<span aria-label="${hint}" style="display:inline-flex;align-items:center;justify-content:center;width:1.1rem;height:1.1rem;border-radius:50%;color:#64748b;font-size:.7rem;border:1px solid #444;margin-left:.25rem;cursor:help;">?</span>` : ''}
-      </th>`;
+    // Column registry: key -> {label, hint, group, type, align, extract, format?, color?, defaultVisible}
+    function buildColumns(plugins, compareDefaultIds) {
+      const compareDefault = new Set(compareDefaultIds || []);
+      const cols = {
+        model: { label: 'Model', hint: HINTS.Model, group: 'General', type: 'text', align: 'left',
+          extract: (r) => r.model_name, defaultVisible: true },
+        run: { label: 'Run', hint: HINTS.Run, group: 'General', type: 'text', align: 'left',
+          extract: (r) => r.run_id, defaultVisible: false },
+        score: { label: 'Score', hint: HINTS.Score, group: 'General', type: 'number', align: 'right',
+          extract: (r) => r.overall_score, format: (v) => formatNum(v, 3), color: (v) => scoreColor(v), defaultVisible: true },
+        p50: { label: 'p50 (ms)', hint: HINTS['p50 (ms)'], group: 'Latency', type: 'number', align: 'right',
+          extract: (r) => r.latency_p50_ms, defaultVisible: true },
+        p95: { label: 'p95 (ms)', hint: HINTS['p95 (ms)'], group: 'Latency', type: 'number', align: 'right',
+          extract: (r) => r.latency_p95_ms, defaultVisible: true },
+        ttft: { label: 'TTFT p50', hint: HINTS['TTFT p50'], group: 'Latency', type: 'number', align: 'right',
+          extract: (r) => r.time_to_first_token_p50_ms, defaultVisible: true },
+        tps: { label: 'Tokens/s', hint: HINTS['Tokens/s'], group: 'Latency', type: 'number', align: 'right',
+          extract: (r) => r.tokens_per_second, defaultVisible: true },
+        cases: { label: 'Cases', hint: HINTS.Cases, group: 'General', type: 'number', align: 'right',
+          extract: (r) => r.cases_run, defaultVisible: true },
+        errors: { label: 'Errors', hint: HINTS.Errors, group: 'General', type: 'number', align: 'right',
+          extract: (r) => r.errors, color: (v) => (v > 0 ? '#ef4444' : 'inherit'), defaultVisible: true },
+      };
+      // Per-plugin columns: a score column per active plugin (default-on) plus
+      // optional per-plugin latency/ttft/tokens columns (opt-in). The set of
+      // default-on per-plugin ids comes from the server's `compare_default`
+      // config list (empty => all run plugins default-on).
+      const seen = new Set();
+      const active = (plugins || []);
+      const allDefault = compareDefault.size === 0;
+      for (const p of active) {
+        const id = p.plugin_id;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        cols[`plugin:${id}:score`] = {
+          label: `${id} score`, hint: `Plugin '${id}' weighted score for this model.`,
+          group: 'Per-plugin', type: 'number', align: 'right',
+          extract: (r) => (r.plugins || []).find((x) => x.plugin_id === id)?.score ?? null,
+          format: (v) => formatNum(v, 3), color: (v) => scoreColor(v),
+          defaultVisible: allDefault || compareDefault.has(id),
+        };
+        cols[`plugin:${id}:p50`] = {
+          label: `${id} p50 (ms)`, hint: `Plugin '${id}' median generation latency.`,
+          group: 'Per-plugin', type: 'number', align: 'right',
+          extract: (r) => (r.plugins || []).find((x) => x.plugin_id === id)?.latency_p50_ms ?? null,
+          defaultVisible: false,
+        };
+        cols[`plugin:${id}:ttft`] = {
+          label: `${id} TTFT`, hint: `Plugin '${id}' median time to first token.`,
+          group: 'Per-plugin', type: 'number', align: 'right',
+          extract: (r) => (r.plugins || []).find((x) => x.plugin_id === id)?.time_to_first_token_p50_ms ?? null,
+          defaultVisible: false,
+        };
+        cols[`plugin:${id}:tps`] = {
+          label: `${id} Tokens/s`, hint: `Plugin '${id}' output tokens per second.`,
+          group: 'Per-plugin', type: 'number', align: 'right',
+          extract: (r) => (r.plugins || []).find((x) => x.plugin_id === id)?.tokens_per_second ?? null,
+          defaultVisible: false,
+        };
+      }
+      return cols;
+    }
+
+    // --- localStorage persistence helpers ---
+    const storage = {
+      order: (cols) => JSON.parse(localStorage.getItem('compare.columns.order') || 'null') || Object.keys(cols),
+      orderOk: (cols) => {
+        const o = JSON.parse(localStorage.getItem('compare.columns.order') || 'null') || [];
+        const keys = o.filter((k) => cols[k]);
+        for (const k of Object.keys(cols)) if (!keys.includes(k)) keys.push(k);
+        localStorage.setItem('compare.columns.order', JSON.stringify(keys));
+        return keys;
+      },
+      visible: () => {
+        const raw = localStorage.getItem('compare.columns.visible');
+        if (!raw) return null; // null => all columns visible
+        try { return new Set(JSON.parse(raw)); } catch { return null; }
+      },
+      setVisible: (keys) => localStorage.setItem('compare.columns.visible', JSON.stringify([...keys])),
+      sort: () => JSON.parse(localStorage.getItem('compare.sort') || 'null') || { key: 'score', dir: 'desc' },
+      setSort: (key, dir) => localStorage.setItem('compare.sort', JSON.stringify({ key, dir })),
     };
 
-    const compareTable = (rows, runId) => {
-      const header = runId ? `
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; background:#1e293b; padding:.75rem 1rem; border-radius:.5rem; border:1px solid #334155;">
-          <span style="color:#94a3b8; font-size:.875rem;">Run <code style="background:#0f172a; padding:.125rem .375rem; border-radius:.25rem;">${esc(runId)}</code></span>
-          <button data-delete-run style="background:transparent; color:#ef4444; border:1px solid #7f1d1d; padding:.375rem .875rem; border-radius:.375rem; cursor:pointer; font-size:.875rem;">Delete run</button>
-        </div>` : '';
-      return header + `
+    const sortRows = (rows, cols, by, dir) => {
+      const col = cols[by];
+      if (!col) return rows;
+      const extract = col.extract;
+      const cmp = (a, b) => {
+        const av = extract(a);
+        const bv = extract(b);
+        const an = Number(av), bn = Number(bv);
+        const avn = Number.isNaN(an), bvn = Number.isNaN(bn);
+        if (avn && bvn) return 0;
+        if (avn) return 1; // nulls last
+        if (bvn) return -1;
+        if (!avn && !bvn) return an < bn ? -1 : an > bn ? 1 : 0;
+        return String(av) < String(bv) ? -1 : String(av) > String(bv) ? 1 : 0;
+      };
+      const sorted = [...rows].sort(cmp);
+      return dir === 'desc' ? sorted.reverse() : sorted;
+    };
+
+    const visibleKeys = (cols) => {
+      const order = storage.order(cols);
+      const v = storage.visible();
+      return order.filter((k) => cols[k] && (v === null || v.has(k)));
+    };
+
+    const headerRow = (runIds, cols) => {
+      const isMulti = runIds.length > 1;
+      if (isMulti) {
+        return `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; background:#1e293b; padding:.75rem 1rem; border-radius:.5rem; border:1px solid #334155;">
+          <span style="color:#94a3b8; font-size:.875rem;">Runs: ${esc(runIds.join(', '))}</span>
+          <button data-delete-run="${runIds.map((r) => esc(r)).join(',')}" style="background:transparent; color:#ef4444; border:1px solid #7f1d1d; padding:.375rem .875rem; border-radius:.375rem; cursor:pointer; font-size:.875rem;">Delete runs</button>
+        </div>`;
+      }
+      if (runIds.length === 1) {
+        return `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; background:#1e293b; padding:.75rem 1rem; border-radius:.5rem; border:1px solid #334155;">
+          <span style="color:#94a3b8; font-size:.875rem;">Run <code style="background:#0f172a; padding:.125rem .375rem; border-radius:.25rem;">${esc(runIds[0])}</code></span>
+          <button data-delete-run="${esc(runIds[0])}" style="background:transparent; color:#ef4444; border:1px solid #7f1d1d; padding:.375rem .875rem; border-radius:.375rem; cursor:pointer; font-size:.875rem;">Delete run</button>
+        </div>`;
+      }
+      return '';
+    };
+
+    const compareTable = (rows, runIds, cols) => {
+      const keys = visibleKeys(cols);
+      const s = storage.sort();
+      return headerRow(runIds, cols) + `
       <div style="overflow-x:auto; background:#1e293b; border-radius:.5rem; border:1px solid #334155;">
         <table style="width:100%; border-collapse:collapse;">
           <thead>
-            <tr style="border-bottom:1px solid #334155;">
-              ${th('Model', 'left')}
-              ${th('Score')}
-              ${th('p50 (ms)')}
-              ${th('p95 (ms)')}
-              ${th('TTFT p50')}
-              ${th('Tokens/s')}
-              ${th('Cases')}
-              ${th('Errors')}
+            <tr style="border-bottom:1px solid #334155; background:rgba(255,255,255,0.02);">
+              ${keys.map((k) => thInfo(cols[k].label, cols[k].align, cols[k].hint,
+                { sortable: true, sortKey: k, sortDir: s.key === k ? s.dir : null })).join('')}
             </tr>
           </thead>
           <tbody>
-            ${rows.map((row, i) => `
+            ${sortRows(rows, cols, s.key, s.dir).map((row, i) => `
               <tr style="border-bottom:1px solid #334155; background:${i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)'};">
-                <td style="padding:1rem; font-weight:500;">${esc(row.model_name)}</td>
-                <td style="text-align:right; padding:1rem; color:${scoreColor(row.overall_score)};">${fmt(row.overall_score, 3)}</td>
-                <td style="text-align:right; padding:1rem;">${fmt(row.latency_p50_ms, 1)}</td>
-                <td style="text-align:right; padding:1rem;">${fmt(row.latency_p95_ms, 1)}</td>
-                <td style="text-align:right; padding:1rem;">${fmt(row.time_to_first_token_p50_ms, 1)}</td>
-                <td style="text-align:right; padding:1rem;">${fmt(row.tokens_per_second, 1)}</td>
-                <td style="text-align:right; padding:1rem;">${row.cases_run || 0}</td>
-                <td style="text-align:right; padding:1rem; color:${row.errors > 0 ? '#ef4444' : 'inherit'};">${row.errors || 0}</td>
+                ${keys.map((k) => {
+                  const c = cols[k];
+                  const val = c.extract(row);
+                  const color = (typeof c.color === 'function') ? c.color(val) : 'inherit';
+                  const display = typeof c.format === 'function' ? c.format(val) : (val === null || val === undefined ? '-' : esc(val));
+                  const isNum = c.type === 'number' && val != null && !Number.isNaN(Number(val));
+                  return `<td style="text-align:${c.align}; padding:1rem; color:${color}; ${isNum ? 'font-variant-numeric:tabular-nums;' : ''}">${display}</td>`;
+                }).join('')}
               </tr>`).join('')}
           </tbody>
         </table>
@@ -75,6 +194,10 @@ import MainLayout from '../layouts/MainLayout.astro';
         <span><strong>TTFT p50</strong>: median time to first token (prompt processing + first-token latency).</span>
         <span><strong>Tokens/s</strong>: output tokens per second (throughput).</span>
       </div>
+      <div style="margin-top:1.5rem;">
+        <button id="show-errors" type="button" style="background:#0f172a; color:#e2e8f0; border:1px solid #334155; border-radius:.375rem; padding:.375rem .875rem; cursor:pointer; font-size:.85rem;">Show per-case errors</button>
+      </div>
+      <div id="errors-detail" style="margin-top:.75rem;"></div>
       <div style="margin-top:2rem; display:flex; gap:1rem;">
         <a href="/run" style="background:#3b82f6; color:white; padding:.75rem 2rem; border-radius:.375rem; text-decoration:none; font-weight:500;">Run More Benchmarks</a>
         <a href="/history" style="background:#64748b; color:white; padding:.75rem 2rem; border-radius:.375rem; text-decoration:none; font-weight:500;">View History</a>
@@ -87,7 +210,8 @@ import MainLayout from '../layouts/MainLayout.astro';
         <a href="/run" style="color:#3b82f6; text-decoration:none; font-weight:500;">Run your first benchmark →</a>
       </div>`;
 
-    let currentRunId = null;
+    let currentRunIds = [];
+    let currentCols = {};
 
     async function deleteRun(runId) {
       const confirmed = await confirmModal({
@@ -106,17 +230,91 @@ import MainLayout from '../layouts/MainLayout.astro';
       }
     }
 
+    async function loadCases(runId) {
+      const res = await fetch(`/api/benchmarks/${encodeURIComponent(runId)}/cases`);
+      if (!res.ok) throw new Error('Failed to load cases');
+      return (await res.json()).cases || [];
+    }
+
+    const renderErrors = async (runIds) => {
+      const detail = document.getElementById('errors-detail');
+      if (!detail) return;
+      detail.innerHTML = '<p style="color:#94a3b8;">Loading errors…</p>';
+      try {
+        const perRun = await Promise.all(runIds.map((id) => loadCases(id).catch(() => [])));
+        let html = '';
+        let any = false;
+        runIds.forEach((id, i) => {
+          const cases = perRun[i] || [];
+          const bad = cases.filter((c) => c.error || (c.passed === 0));
+          if (!bad.length) return;
+          any = true;
+          html += `<div style="margin-bottom:1rem;">
+            <strong style="color:#e2e8f0">${esc(id)}</strong>
+            <table style="width:100%; border-collapse:collapse; margin-top:.375rem; font-size:.85rem;">
+              <tr style="border-bottom:1px solid #334155;"><th style="text-align:left;padding:.3rem .75rem;color:#94a3b8;">Model</th><th style="text-align:left;padding:.3rem .75rem;color:#94a3b8;">Plugin</th><th style="text-align:left;padding:.3rem .75rem;color:#94a3b8;">Case</th><th style="text-align:left;padding:.3rem .75rem;color:#ef4444;">Error</th></tr>`;
+          bad.forEach((c) => {
+            html += `<tr style="border-bottom:1px solid #334155;">
+              <td style="padding:.3rem .75rem;">${esc(c.model_name)}</td>
+              <td style="padding:.3rem .75rem;">${esc(c.plugin_id)}</td>
+              <td style="padding:.3rem .75rem; font-family:monospace;">${esc(c.case_id)}</td>
+              <td style="padding:.3rem .75rem;">${esc(c.error || 'evaluate failed')}</td></tr>`;
+          });
+          html += `</table></div>`;
+        });
+        detail.innerHTML = any ? html : '<p style="color:#94a3b8; font-size:.875rem;">No errors found for the selected run(s).</p>';
+        detail.dataset.rendered = 'true';
+      } catch (e) {
+        detail.innerHTML = `<p style="color:#ef4444;">Error: ${(e && e.message) || e}</p>`;
+      }
+    };
+
+    async function collectPlugins(runIds) {
+      if (!runIds.length) return [];
+      const seen = new Map();
+      for (const id of runIds) {
+        try {
+          const r = await fetch(`/api/benchmarks/${encodeURIComponent(id)}`);
+          if (!r.ok) continue;
+          const body = await r.json();
+          for (const m of (body.models || [])) {
+            for (const p of (m.plugins || [])) {
+              if (!seen.has(p.plugin_id)) seen.set(p.plugin_id, p);
+            }
+          }
+        } catch { /* keep going */ }
+      }
+      return Array.from(seen.values());
+    }
+
     async function load() {
       const el = document.getElementById('compare');
       const errEl = document.getElementById('error');
       try {
-        currentRunId = new URLSearchParams(location.search).get('run');
-        const url = currentRunId ? `/api/benchmarks/${encodeURIComponent(currentRunId)}` : '/api/compare';
+        const params = new URLSearchParams(location.search);
+        const runIds = params.getAll('run');
+        currentRunIds = runIds;
+        const [plugins, pluginIndex] = await Promise.all([
+          collectPlugins(runIds),
+          fetch('/api/plugins').then((r) => (r.ok ? r.json() : { compare_default: [] })),
+        ]);
+        const compareDefault = pluginIndex.compare_default || [];
+        currentCols = buildColumns(plugins, compareDefault);
+        const keys = storage.orderOk(currentCols);
+        // Seed localStorage with default visibility (only defaultVisible cols) on first visit.
+        if (!localStorage.getItem('compare.columns.visible')) {
+          storage.setVisible(keys.filter((k) => currentCols[k].defaultVisible));
+        }
+        renderColumnToggles(currentCols, keys);
+
+        const url = runIds.length
+          ? `/api/compare?${runIds.map((r) => 'run=' + encodeURIComponent(r)).join('&')}`
+          : '/api/compare';
         const res = await fetch(url);
         if (!res.ok) throw new Error('Failed to fetch comparison');
         const data = await res.json();
         const rows = data.models || [];
-        el.innerHTML = rows.length ? compareTable(rows, currentRunId) : emptyState();
+        el.innerHTML = rows.length ? compareTable(rows, runIds, currentCols) : emptyState();
       } catch (e) {
         el.innerHTML = '';
         errEl.style.display = 'block';
@@ -124,8 +322,92 @@ import MainLayout from '../layouts/MainLayout.astro';
       }
     }
 
-    document.getElementById('compare').addEventListener('click', (e) => {
-      if (e.target.closest('button[data-delete-run]') && currentRunId) deleteRun(currentRunId);
+    function renderColumnToggles(cols, order) {
+      const list = document.getElementById('column-list-inner');
+      if (!list) return;
+      list.innerHTML = '';
+      const v = storage.visible();
+      const allOn = v === null;
+      for (const k of order) {
+        const c = cols[k];
+        const id = `col-${c.label.replace(/[.\s()]/g, '_').toLowerCase()}`;
+        const on = allOn || v.has(k);
+        const frag = document.createRange().createContextualFragment(
+          `<div style="display:flex; align-items:center; gap:.375rem;">
+            <input type="checkbox" id="${id}" data-col="${esc(k)}" ${on ? 'checked' : ''} style="accent-color:#3b82f6; margin:0;">
+            <label for="${id}" style="color:#cbd5e1; font-size:.85rem; cursor:pointer;">${esc(c.label)}</label>
+          </div>`
+        );
+        list.appendChild(frag);
+      }
+    }
+
+    const getRoot = () => document.getElementById('compare');
+
+    getRoot()?.addEventListener('click', async (e) => {
+      // Sort by column header.
+      let th = e.target.closest('th[data-sort]');
+      if (th) {
+        const key = th.dataset.sort;
+        if (key) {
+          const cur = storage.sort();
+          const dir = (cur.key === key && cur.dir === 'desc') ? 'asc' : 'desc';
+          storage.setSort(key, dir);
+          load();
+        }
+        return;
+      }
+      // Delete run(s) button.
+      let btn = e.target.closest('button[data-delete-run]');
+      if (btn) {
+        const ids = btn.dataset.deleteRun ? btn.dataset.deleteRun.split(',') : [];
+        if (ids.length === 1) { deleteRun(ids[0]); return; }
+        const confirmed = await confirmModal({
+          title: 'Delete multiple benchmarks?',
+          body: `Delete ${ids.length} runs (${ids.join(', ')})? This cannot be undone.`,
+          confirmLabel: 'Delete all',
+        });
+        if (!confirmed) return;
+        try {
+          await Promise.all(ids.map((id) => fetch(`/api/benchmarks/${encodeURIComponent(id)}`, { method: 'DELETE' })));
+          toast('Benchmarks deleted', 'success');
+          location.href = '/history';
+        } catch (err) {
+          toast(`Error: ${err.message}`, 'error');
+        }
+        return;
+      }
+      // Show/hide per-case errors panel.
+        const showErr = e.target.closest('button#show-errors');
+        if (showErr) {
+          const detail = document.getElementById('errors-detail');
+          if (!detail) return;
+          if (detail.dataset.rendered === 'true') {
+            detail.innerHTML = '';
+            detail.dataset.rendered = '';
+            showErr.textContent = 'Show per-case errors';
+            return;
+          }
+          await renderErrors(currentRunIds);
+          showErr.textContent = 'Hide errors';
+        }
+    });
+
+    document.getElementById('column-panel')?.addEventListener('click', (e) => {
+      const toggle = e.target.closest('input[type="checkbox"][data-col]');
+      if (!toggle) return;
+      const key = toggle.dataset.col;
+      const v = storage.visible();
+      const set = v === null ? new Set(storage.order(currentCols)) : v;
+      if (toggle.checked) set.add(key); else set.delete(key);
+      storage.setVisible([...set]);
+      load();
+    });
+
+    document.getElementById('reset-columns')?.addEventListener('click', () => {
+      localStorage.removeItem('compare.columns.visible');
+      localStorage.removeItem('compare.columns.order');
+      load();
     });
 
     load();
