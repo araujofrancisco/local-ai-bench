@@ -1,11 +1,10 @@
 """Unit tests for the plugin registry and local plugin loading."""
 
-import asyncio
 import base64
 
 from ollama_bench.domain.models import ModelResponse, TimingMetrics, TokenMetrics
 from ollama_bench.plugins import load_plugins
-from ollama_bench.plugins.base import BenchmarkPlugin, RunContext
+from ollama_bench.plugins.base import RunContext
 from ollama_bench.plugins.registry import PluginRegistry
 
 VALID_PLUGIN = '''\

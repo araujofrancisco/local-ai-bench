@@ -6,6 +6,7 @@ so the module-level config/DB defaults point at isolated test artifacts.
 
 from __future__ import annotations
 
+import datetime
 import os
 import tempfile
 from pathlib import Path
@@ -17,7 +18,7 @@ os.environ["CONFIG_PATH"] = str(Path(__file__).resolve().parents[2] / "config" /
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from ollama_bench.api.app import RunManager, RunStatus, app  # noqa: E402
+from ollama_bench.api.app import RunManager, RunStatus, app, run_manager  # noqa: E402
 from ollama_bench.domain.events import Event, Events  # noqa: E402
 from ollama_bench.domain.models import (  # noqa: E402
     BenchmarkCase,
@@ -288,3 +289,104 @@ def test_run_status_progress_tracking() -> None:
     msg = status.to_message("complete")
     assert msg["type"] == "complete"
     assert msg["run_id"] == "r1"
+
+
+def test_run_status_message_includes_status_metadata() -> None:
+    status = RunStatus(
+        run_id="r2",
+        status="running",
+        started_at="2026-01-01T00:00:00+00:00",
+        models=["m1", "m2"],
+        plugins=["smoke"],
+    )
+    msg = status.to_message("progress")
+    assert msg["started_at"] == "2026-01-01T00:00:00+00:00"
+    assert msg["models"] == ["m1", "m2"]
+    assert msg["plugins"] == ["smoke"]
+
+
+def test_run_manager_keeps_active_statuses() -> None:
+    manager = RunManager(terminal_ttl_seconds=0.0)
+    running = RunStatus(run_id="run1", status="running", started_at="2026-01-01T00:00:00Z")
+    manager.set(running)
+    assert manager.get("run1") is not None
+    assert [s.run_id for s in manager.active()] == ["run1"]
+
+
+def test_run_manager_evicts_expired_terminal_statuses() -> None:
+    manager = RunManager(terminal_ttl_seconds=0.0)
+    done = RunStatus(run_id="expired1", status="completed", finished_at="2026-01-01T00:00:00Z")
+    manager.set(done)
+    # TTL of 0s => terminal status is immediately evicted on read-back.
+    assert manager.get("expired1") is None
+    assert manager.active() == []
+
+
+def test_run_manager_enforces_cap_evicting_oldest_terminal() -> None:
+    now = datetime.datetime.now(datetime.UTC)
+    manager = RunManager(terminal_ttl_seconds=3600.0, max_statuses=2)
+    manager.set(RunStatus(run_id="a", status="completed", finished_at=(now - datetime.timedelta(seconds=30)).isoformat()))
+    manager.set(RunStatus(run_id="b", status="completed", finished_at=(now - datetime.timedelta(seconds=20)).isoformat()))
+    manager.set(RunStatus(run_id="c", status="completed", finished_at=(now - datetime.timedelta(seconds=10)).isoformat()))
+    assert manager.get("a") is None       # oldest terminal evicted by the cap
+    assert manager.get("b") is not None
+    assert manager.get("c") is not None
+
+
+def test_api_batch_delete_benchmarks() -> None:
+    repo = BenchmarkRepository(_TMP_DB)
+    try:
+        repo.save_run(_make_run("b1", "alpha", "hA", "2026-02-10T00:00:00+00:00"))
+        repo.save_run(_make_run("b2", "beta", "hB", "2026-02-11T00:00:00+00:00"))
+        repo.save_run(_make_run("b3", "gamma", "hC", "2026-02-12T00:00:00+00:00"))
+    finally:
+        repo.close()
+
+    with TestClient(app) as client:
+        resp = client.post("/api/benchmarks/delete", json={"run_ids": ["b1", "b3"]})
+        assert resp.status_code == 200
+        assert resp.json()["count"] == 2
+
+        assert client.get("/api/benchmarks/b1").status_code == 404
+        assert client.get("/api/benchmarks/b3").status_code == 404
+        assert client.get("/api/benchmarks/b2").status_code == 200
+
+        # Empty batch is rejected by the request validator.
+        assert client.post("/api/benchmarks/delete", json={"run_ids": []}).status_code == 422
+
+
+def test_api_cannot_delete_active_run() -> None:
+    run_manager.set(RunStatus(run_id="activedel", status="running"))
+    try:
+        with TestClient(app) as client:
+            assert client.delete("/api/benchmarks/activedel").status_code == 409
+            batch = client.post(
+                "/api/benchmarks/delete",
+                json={"run_ids": ["activedel", "other"]},
+            )
+            assert batch.status_code == 409
+    finally:
+        run_manager.remove("activedel")
+
+
+def test_api_active_runs_endpoint() -> None:
+    run_manager.set(
+        RunStatus(
+            run_id="act1",
+            status="running",
+            started_at="2026-01-01T00:00:00Z",
+            models=["m1"],
+            plugins=["smoke"],
+        )
+    )
+    run_manager.set(RunStatus(run_id="act2", status="completed", finished_at="2026-01-01T00:00:00Z"))
+    try:
+        with TestClient(app) as client:
+            resp = client.get("/api/benchmarks/active")
+            assert resp.status_code == 200
+            ids = [r["run_id"] for r in resp.json()["runs"]]
+            assert "act1" in ids
+            assert "act2" not in ids  # terminal statuses are excluded
+    finally:
+        run_manager.remove("act1")
+        run_manager.remove("act2")

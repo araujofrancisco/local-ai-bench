@@ -15,6 +15,40 @@ import { JSDOM } from 'jsdom';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIST = path.join(__dirname, '..', 'dist');
 
+/**
+ * Make a built ES module evaluable via `window.eval` by inlining its
+ * `import {a, b as c} from "./chunk.js"` statements. The chunk is wrapped in an
+ * IIFE that returns its exports as an object, and the import becomes a
+ * destructure of that object — so the chunk's internal (mangled) names stay
+ * scoped inside the IIFE and cannot collide with the page's top-level names.
+ *
+ * This mirrors how Vite names exports (e.g. `export{p as x}`) without needing a
+ * real module loader or fighting Node's ESM cache.
+ */
+function inlineImports(content, baseDir) {
+  const importRe = /import\s*\{([^}]*)\}\s*from\s*"([^"]+)";?/g;
+  return content.replace(importRe, (full, specList, src) => {
+    if (!src.startsWith('.')) return full; // leave bare specifiers untouched
+    const chunkAbs = path.resolve(baseDir, src);
+    let chunk = fs.readFileSync(chunkAbs, 'utf8');
+    chunk = inlineImports(chunk, path.dirname(chunkAbs));
+    const exportMap = {};
+    chunk = chunk.replace(/export\s*\{([^}]*)\}\s*;?/g, (_ef, list) => {
+      for (const pair of list.split(',').map((s) => s.trim()).filter(Boolean)) {
+        const [internal, exported] = pair.split(/\s+as\s+/).map((s) => s.trim());
+        exportMap[exported || internal] = internal;
+      }
+      return '';
+    });
+    const returnObj = '{' + Object.entries(exportMap).map(([e, i]) => `${e}:${i}`).join(',') + '}';
+    const destructure = '{' + specList.split(',').map((s) => s.trim()).filter(Boolean).map((spec) => {
+      const [imported, local] = spec.split(/\s+as\s+/).map((s) => s.trim());
+      return local ? `${imported}:${local}` : imported;
+    }).join(',') + '}';
+    return `const ${destructure}=(function(){${chunk}return ${returnObj};})();`;
+  });
+}
+
 const API = {
   '/api/models': {
     models: [
@@ -43,6 +77,15 @@ const API = {
     run: { run_id: 'r1' },
     models: [{ model_name: 'm1', overall_score: 0.9, latency_p50_ms: 10, latency_p95_ms: 20, time_to_first_token_p50_ms: 5, tokens_per_second: 50, cases_run: 2, errors: 0 }],
   },
+  '/api/benchmarks/active': {
+    runs: [
+      {
+        type: 'status', run_id: 'running1', status: 'running', progress: 0.5,
+        total: 4, completed: 2, errors: 0, model: 'm1', plugin: 'smoke',
+        models: ['m1'], plugins: ['smoke'], started_at: '2026-01-01T00:00:00Z',
+      },
+    ],
+  },
   '/api/benchmarks/running1/status': {
     type: 'progress', run_id: 'running1', status: 'running', progress: 0.5,
     total: 4, completed: 2, errors: 0, model: 'm1', plugin: 'smoke', case_id: 'c1', message: null,
@@ -64,9 +107,10 @@ function loadPage(relPath, url, opts = {}) {
     /<script type="module"(?:\s+src="([^"]*)")?>([\s\S]*?)<\/script>/g,
     (_, src, body) => {
       if (src) {
-        scripts.push(fs.readFileSync(path.join(DIST, src.replace(/^\//, '')), 'utf8'));
+        const file = path.join(DIST, src.replace(/^\//, ''));
+        scripts.push(inlineImports(fs.readFileSync(file, 'utf8'), path.dirname(file)));
       } else {
-        scripts.push(body);
+        scripts.push(inlineImports(body, DIST));
       }
       return '';
     }
@@ -119,10 +163,11 @@ const results = await Promise.all([
   loadPage('run/index.html', 'http://localhost:8000/run/', { storage: { 'ollama-bench.active-run': 'running1' } }),
   loadPage('run/index.html', 'http://localhost:8000/run/', { storage: { 'ollama-bench.active-run': 'done1' } }),
   loadPage('run/index.html', 'http://localhost:8000/run/', { storage: { 'ollama-bench.active-run': 'gone1' } }),
+  loadPage('run/index.html', 'http://localhost:8000/run/?run=running1'),
 ]);
 await wait(150);
 
-const [d1, d2, d3, d4, d5, d6, d7, d8, d9] = results;
+const [d1, d2, d3, d4, d5, d6, d7, d8, d9, d10] = results;
 
 assert('index: stat-models = 2', d1.getElementById('stat-models').textContent === '2');
 assert('index: stat-runs = 1', d1.getElementById('stat-runs').textContent === '1');
@@ -130,6 +175,9 @@ assert('index: last run not Never', d1.getElementById('stat-last').textContent !
 assert('index: model card rendered', d1.getElementById('models').textContent.includes('llama3.2:latest'));
 assert('index: vision badge', d1.getElementById('models').textContent.includes('Vision'));
 assert('index: runs table', d1.getElementById('runs').textContent.includes('r1'));
+assert('index: delete button present', d1.querySelector('button[data-delete]') !== null);
+assert('index: active run shown', d1.getElementById('active-runs').textContent.includes('running1'));
+assert('index: active run track link', d1.getElementById('active-runs').textContent.includes('Track'));
 
 assert('plugins: cards rendered', d2.getElementById('plugins').textContent.includes('Keyword presence'));
 assert('plugins: description shown', d2.getElementById('plugins').textContent.includes('Fast sanity check'));
@@ -138,10 +186,15 @@ assert('plugins: options editor present', d2.querySelector('#plugins form[data-p
 assert('history: table with run', d3.getElementById('history').textContent.includes('r1'));
 assert('history: delete button present', d3.querySelector('button[data-delete]') !== null);
 assert('history: filter bar present', d3.getElementById('f-search') !== null && d3.getElementById('f-model') !== null);
+assert('history: row checkboxes present', d3.querySelector('.row-check') !== null);
+assert('history: select-all checkbox present', d3.querySelector('#select-all') !== null);
+assert('history: batch delete button present', d3.querySelector('#bulk-delete') !== null);
+assert('history: active run merged', d3.getElementById('history').textContent.includes('running1'));
 
 assert('compare: model row', d4.getElementById('compare').textContent.includes('m1'));
 assert('compare: score shown', d4.getElementById('compare').textContent.includes('0.900'));
 assert('compare?run=r1: model row', d5.getElementById('compare').textContent.includes('m1'));
+assert('compare?run=r1: delete run button present', d5.querySelector('button[data-delete-run]') !== null);
 
 assert('run: no script error', !d6.title.startsWith('SCRIPT ERROR'));
 assert('run: form visible', d6.getElementById('benchmark-form').style.display === 'block');
@@ -155,5 +208,8 @@ assert('resume: running -> poller scheduled', d7.defaultView.__intervals.length 
 assert('resume: completed -> result shown', d8.getElementById('results').textContent.includes('Benchmark completed'));
 assert('resume: unknown -> form visible', d9.getElementById('benchmark-form').style.display === 'block');
 assert('resume: unknown -> key cleared', d9.defaultView.localStorage.getItem('ollama-bench.active-run') === null);
+
+assert('resume from ?run=: progress visible', d10.getElementById('progress').style.display === 'block');
+assert('resume from ?run=: poller scheduled', d10.defaultView.__intervals.length >= 1);
 
 console.log(process.exitCode ? '\nSome checks FAILED' : '\nAll page checks passed');

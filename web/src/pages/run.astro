@@ -59,7 +59,8 @@ import MainLayout from '../layouts/MainLayout.astro';
     const esc = (s) =>
       String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-    const wsUrl = () => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
+    const wsUrl = (runId) =>
+      `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?run_id=${encodeURIComponent(runId)}`;
 
     const ACTIVE_RUN_KEY = 'ollama-bench.active-run';
     const storeRun = (runId) => { try { localStorage.setItem(ACTIVE_RUN_KEY, runId); } catch (e) {} };
@@ -127,7 +128,7 @@ import MainLayout from '../layouts/MainLayout.astro';
       settled = false;
 
       try {
-        ws = new WebSocket(wsUrl());
+        ws = new WebSocket(wsUrl(runId));
         ws.onmessage = (e) => {
           const msg = JSON.parse(e.data);
           if (msg.type !== 'progress' && msg.type !== 'complete') return;
@@ -244,8 +245,14 @@ import MainLayout from '../layouts/MainLayout.astro';
     });
 
     async function boot() {
-      const activeRun = localStorage.getItem(ACTIVE_RUN_KEY);
-      if (activeRun) await resumeActiveRun(activeRun);
+      // A ?run= query param (e.g. from the dashboard "Track" link) takes
+      // precedence over the locally persisted active run.
+      const queryRun = new URLSearchParams(location.search).get('run');
+      const activeRun = queryRun || localStorage.getItem(ACTIVE_RUN_KEY);
+      if (activeRun) {
+        storeRun(activeRun);
+        await resumeActiveRun(activeRun);
+      }
       loadOptions();
     }
 

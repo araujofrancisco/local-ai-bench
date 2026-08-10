@@ -275,14 +275,22 @@ class BenchmarkRepository:
         return {"models": models, "hosts": sorted(host_set)}
 
     def delete_run(self, run_id: str) -> bool:
-        if self._conn.execute("SELECT 1 FROM runs WHERE run_id = ?", (run_id,)).fetchone() is None:
-            return False
-        self._conn.execute("DELETE FROM cases WHERE run_id = ?", (run_id,))
-        self._conn.execute("DELETE FROM plugins WHERE run_id = ?", (run_id,))
-        self._conn.execute("DELETE FROM models WHERE run_id = ?", (run_id,))
-        self._conn.execute("DELETE FROM runs WHERE run_id = ?", (run_id,))
+        return self.delete_runs([run_id]) > 0
+
+    def delete_runs(self, run_ids: list[str]) -> int:
+        """Delete multiple runs and all their child rows in a single transaction.
+
+        Returns the number of runs actually deleted. Missing ids are ignored.
+        """
+        if not run_ids:
+            return 0
+        placeholders = ",".join("?" * len(run_ids))
+        self._conn.execute(f"DELETE FROM cases WHERE run_id IN ({placeholders})", run_ids)
+        self._conn.execute(f"DELETE FROM plugins WHERE run_id IN ({placeholders})", run_ids)
+        self._conn.execute(f"DELETE FROM models WHERE run_id IN ({placeholders})", run_ids)
+        cur = self._conn.execute(f"DELETE FROM runs WHERE run_id IN ({placeholders})", run_ids)
         self._conn.commit()
-        return True
+        return cur.rowcount
 
     def get_plugin_options(self, plugin_id: str) -> dict[str, Any] | None:
         row = self._conn.execute(

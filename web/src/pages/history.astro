@@ -20,38 +20,66 @@ import MainLayout from '../layouts/MainLayout.astro';
     <button id="f-reset" style="background:#334155; color:#e2e8f0; border:none; padding:.5rem .875rem; border-radius:.375rem; cursor:pointer;">Reset</button>
   </div>
 
+  <div id="bulk-bar" style="display:none; align-items:center; gap:1rem; background:#1e293b; padding:.75rem 1rem; border-radius:.5rem; border:1px solid #7c3aed; margin-bottom:1rem;">
+    <span id="bulk-count" style="color:#cbd5e1; font-size:.9rem;"></span>
+    <button id="bulk-delete" style="background:#ef4444; color:#fff; border:none; padding:.375rem .875rem; border-radius:.375rem; cursor:pointer; font-size:.875rem;">Delete Selected</button>
+    <button id="bulk-clear" style="background:transparent; color:#94a3b8; border:1px solid #334155; padding:.375rem .875rem; border-radius:.375rem; cursor:pointer; font-size:.875rem;">Clear</button>
+  </div>
+
   <div id="history">
     <p style="color: #94a3b8;">Loading history…</p>
   </div>
 
   <script>
-    const esc = (s) =>
-      String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    import { esc, toast, confirmModal } from '../scripts/ui.js';
+
+    const statusChip = (status) => {
+      if (status === 'running') {
+        return '<span style="background:rgba(245,158,11,.15);color:#f59e0b;padding:.125rem .5rem;border-radius:.25rem;font-size:.75rem;white-space:nowrap;">● Running</span>';
+      }
+      if (status === 'pending') {
+        return '<span style="background:rgba(148,163,184,.15);color:#94a3b8;padding:.125rem .5rem;border-radius:.25rem;font-size:.75rem;white-space:nowrap;">● Queued</span>';
+      }
+      return '<span style="color:#64748b;font-size:.75rem;">Completed</span>';
+    };
 
     const runsTable = (runs) => `
       <div style="background:#1e293b; border-radius:.5rem; border:1px solid #334155; overflow:hidden;">
         <table style="width:100%; border-collapse:collapse;">
           <thead>
             <tr style="border-bottom:1px solid #334155; background:rgba(255,255,255,0.02);">
+              <th style="text-align:left; padding:1rem; width:2.5rem;">
+                <input id="select-all" type="checkbox" aria-label="Select all" style="width:1.1rem;height:1.1rem;accent-color:#3b82f6;" />
+              </th>
               <th style="text-align:left; padding:1rem; color:#94a3b8; font-weight:500;">Run ID</th>
               <th style="text-align:left; padding:1rem; color:#94a3b8; font-weight:500;">Timestamp</th>
               <th style="text-align:left; padding:1rem; color:#94a3b8; font-weight:500;">Models</th>
               <th style="text-align:left; padding:1rem; color:#94a3b8; font-weight:500;">Hosts</th>
+              <th style="text-align:left; padding:1rem; color:#94a3b8; font-weight:500;">Status</th>
               <th style="text-align:right; padding:1rem; color:#94a3b8; font-weight:500;">Actions</th>
             </tr>
           </thead>
           <tbody>
-            ${runs.map((run, i) => `
+            ${runs.map((run, i) => {
+              const isActive = run.status === 'running' || run.status === 'pending';
+              return `
               <tr style="border-bottom:1px solid #334155; background:${i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)'};">
+                <td style="padding:1rem;">
+                  <input type="checkbox" class="row-check" value="${esc(run.run_id)}" ${isActive ? 'disabled' : ''} ${selected.has(run.run_id) ? 'checked' : ''} aria-label="Select ${esc(run.run_id)}" style="width:1.1rem;height:1.1rem;accent-color:#3b82f6;" />
+                </td>
                 <td style="padding:1rem; font-family:monospace; font-size:.875rem;">${esc(run.run_id)}</td>
-                <td style="padding:1rem;">${new Date(run.timestamp).toLocaleString()}</td>
+                <td style="padding:1rem; white-space:nowrap;">${run.timestamp ? new Date(run.timestamp).toLocaleString() : '—'}</td>
                 <td style="padding:1rem;">${esc((run.model_names || []).join(', ') || '-')}</td>
                 <td style="padding:1rem;">${esc((run.hosts || []).map(h => h.name).join(', ') || '-')}</td>
+                <td style="padding:1rem;">${statusChip(run.status)}</td>
                 <td style="text-align:right; padding:1rem; white-space:nowrap;">
-                  <a href="/compare?run=${esc(run.run_id)}" style="color:#3b82f6; text-decoration:none; margin-right:1rem;">Compare</a>
-                  <button data-delete="${esc(run.run_id)}" style="background:transparent; color:#ef4444; border:1px solid #7f1d1d; padding:.25rem .625rem; border-radius:.375rem; cursor:pointer; font-size:.875rem;">Delete</button>
+                  ${isActive
+                    ? `<a href="/run?run=${esc(run.run_id)}" style="color:#3b82f6; text-decoration:none; font-weight:500; margin-right:1rem;">Track</a>`
+                    : `<a href="/compare?run=${esc(run.run_id)}" style="color:#3b82f6; text-decoration:none; margin-right:1rem;">Compare</a>
+                       <button data-delete="${esc(run.run_id)}" style="background:transparent; color:#ef4444; border:1px solid #7f1d1d; padding:.25rem .625rem; border-radius:.375rem; cursor:pointer; font-size:.875rem;">Delete</button>`}
                 </td>
-              </tr>`).join('')}
+              </tr>`;
+            }).join('')}
           </tbody>
         </table>
       </div>`;
@@ -86,29 +114,107 @@ import MainLayout from '../layouts/MainLayout.astro';
       hostSel.value = selHost;
     }
 
-    async function load() {
+    let currentRuns = [];
+    let activeRuns = [];
+    const selected = new Set();
+
+    function mergedRows() {
+      const active = activeRuns.map((a) => ({
+        run_id: a.run_id,
+        timestamp: a.started_at || null,
+        model_names: a.models || [],
+        hosts: [],
+        status: a.status,
+      }));
+      const persisted = currentRuns.map((r) => ({ ...r, status: 'completed' }));
+      return [...active, ...persisted];
+    }
+
+    function render(runs) {
       const el = document.getElementById('history');
+      el.innerHTML = runs.length
+        ? `<div style="color:#94a3b8; font-size:.875rem; margin-bottom:.5rem;">${runs.length} run${runs.length === 1 ? '' : 's'}</div>` + runsTable(runs)
+        : `<div style="background:#1e293b; padding:2rem; border-radius:.5rem; border:1px solid #334155; text-align:center;">
+             <p style="color:#94a3b8; margin-bottom:1rem;">No benchmarks match the current filters.</p>
+             <a href="/run" style="color:#3b82f6; text-decoration:none; font-weight:500;">Run your first benchmark →</a>
+           </div>`;
+      updateBulkBar();
+    }
+
+    function updateBulkBar() {
+      const bar = document.getElementById('bulk-bar');
+      const count = selected.size;
+      if (count > 0) {
+        bar.style.display = 'flex';
+        document.getElementById('bulk-count').textContent = `${count} selected`;
+      } else {
+        bar.style.display = 'none';
+      }
+      const selectAll = document.getElementById('select-all');
+      if (selectAll) {
+        const checkable = document.querySelectorAll('.row-check:not(:disabled)');
+        selectAll.checked = checkable.length > 0 && checkable.length === selected.size;
+      }
+    }
+
+    async function load() {
       const errEl = document.getElementById('error');
       try {
         const qs = currentQuery();
         const res = await fetch(`/api/history${qs ? `?${qs}` : ''}`);
         if (!res.ok) throw new Error('Failed to fetch history');
         const data = await res.json();
-        const runs = data.runs || [];
+        currentRuns = data.runs || [];
         populateFilters(data.filters);
-        el.innerHTML = runs.length
-          ? `<div style="color:#94a3b8; font-size:.875rem; margin-bottom:.5rem;">${runs.length} run${runs.length === 1 ? '' : 's'}</div>` + runsTable(runs)
-          : `<div style="background:#1e293b; padding:2rem; border-radius:.5rem; border:1px solid #334155; text-align:center;">
-               <p style="color:#94a3b8; margin-bottom:1rem;">No benchmarks match the current filters.</p>
-               <a href="/run" style="color:#3b82f6; text-decoration:none; font-weight:500;">Run your first benchmark →</a>
-             </div>`;
+        render(mergedRows());
       } catch (e) {
+        const el = document.getElementById('history');
         el.innerHTML = '';
         errEl.style.display = 'block';
         errEl.textContent = `Error: ${e.message}`;
       }
     }
 
+    async function loadActive() {
+      try {
+        const res = await fetch('/api/benchmarks/active');
+        if (!res.ok) return;
+        activeRuns = (await res.json()).runs || [];
+        render(mergedRows());
+      } catch (e) {
+        // Backend briefly unreachable; keep the previous render.
+      }
+    }
+
+    async function deleteRuns(runIds) {
+      const n = runIds.length;
+      const confirmed = await confirmModal({
+        title: `Delete ${n === 1 ? 'benchmark' : `${n} benchmarks`}?`,
+        body: n === 1
+          ? `Delete benchmark ${runIds[0]}? This cannot be undone.`
+          : `Delete ${n} benchmarks (${runIds.join(', ')})? This cannot be undone.`,
+        confirmLabel: n === 1 ? 'Delete' : `Delete ${n}`,
+      });
+      if (!confirmed) return;
+      try {
+        const url = n === 1
+          ? `/api/benchmarks/${encodeURIComponent(runIds[0])}`
+          : '/api/benchmarks/delete';
+        const res = await fetch(url, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: n === 1 ? undefined : JSON.stringify({ run_ids: runIds }),
+        });
+        if (!res.ok) throw new Error(`Delete failed (HTTP ${res.status})`);
+        runIds.forEach((id) => selected.delete(id));
+        toast(n === 1 ? 'Benchmark deleted' : `${n} benchmarks deleted`, 'success');
+        await load();
+      } catch (err) {
+        toast(`Error: ${err.message}`, 'error');
+      }
+    }
+
+    const historyEl = document.getElementById('history');
     const filterFields = ['f-search', 'f-model', 'f-host', 'f-from', 'f-to'];
     filterFields.forEach((id) => {
       document.getElementById(id).addEventListener('input', load);
@@ -119,24 +225,38 @@ import MainLayout from '../layouts/MainLayout.astro';
       load();
     });
 
-    document.getElementById('history').addEventListener('click', async (e) => {
+    historyEl.addEventListener('click', async (e) => {
       const btn = e.target.closest('button[data-delete]');
-      if (!btn) return;
-      const runId = btn.dataset.delete;
-      if (!window.confirm(`Delete benchmark ${runId}? This cannot be undone.`)) return;
-      btn.disabled = true;
-      try {
-        const res = await fetch(`/api/benchmarks/${encodeURIComponent(runId)}`, { method: 'DELETE' });
-        if (!res.ok) throw new Error('Failed to delete benchmark');
-        await load();
-      } catch (err) {
-        const errEl = document.getElementById('error');
-        errEl.style.display = 'block';
-        errEl.textContent = `Error: ${err.message}`;
-        btn.disabled = false;
+      if (btn) deleteRuns([btn.dataset.delete]);
+    });
+
+    historyEl.addEventListener('change', (e) => {
+      if (e.target.classList.contains('row-check')) {
+        if (e.target.checked) selected.add(e.target.value);
+        else selected.delete(e.target.value);
+        updateBulkBar();
+        return;
+      }
+      if (e.target.id === 'select-all') {
+        document.querySelectorAll('.row-check:not(:disabled)').forEach((cb) => {
+          cb.checked = e.target.checked;
+          if (e.target.checked) selected.add(cb.value);
+          else selected.delete(cb.value);
+        });
+        updateBulkBar();
       }
     });
 
+    document.getElementById('bulk-delete').addEventListener('click', () => {
+      if (selected.size) deleteRuns(Array.from(selected));
+    });
+    document.getElementById('bulk-clear').addEventListener('click', () => {
+      selected.clear();
+      render(mergedRows());
+    });
+
     load();
+    loadActive();
+    setInterval(loadActive, 3000);
   </script>
 </MainLayout>

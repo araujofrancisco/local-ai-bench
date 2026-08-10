@@ -8,7 +8,9 @@ frontend is served as static files from ``STATIC_DIR`` when present.
 from __future__ import annotations
 
 import asyncio
+import datetime
 import os
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -57,27 +59,41 @@ def _load_cfg() -> BenchmarkConfig:
 
 
 class ConnectionManager:
-    """Track connected WebSocket clients and broadcast run updates."""
+    """Track WebSocket clients per run and broadcast only that run's updates.
+
+    A client subscribes to a specific run via ``/ws?run_id=...``; progress
+    events are fanned out only to that run's subscribers, never to everyone.
+    """
 
     def __init__(self) -> None:
-        self._active: set[WebSocket] = set()
+        self._subscribers: dict[str | None, set[WebSocket]] = {}
 
-    async def connect(self, ws: WebSocket) -> None:
+    async def connect(self, ws: WebSocket, run_id: str | None) -> None:
         await ws.accept()
-        self._active.add(ws)
+        self._subscribers.setdefault(run_id, set()).add(ws)
 
-    def disconnect(self, ws: WebSocket) -> None:
-        self._active.discard(ws)
+    def disconnect(self, ws: WebSocket, run_id: str | None) -> None:
+        clients = self._subscribers.get(run_id)
+        if clients is None:
+            return
+        clients.discard(ws)
+        if not clients:
+            self._subscribers.pop(run_id, None)
 
-    async def broadcast(self, message: dict[str, Any]) -> None:
+    async def broadcast(self, message: dict[str, Any], run_id: str | None) -> None:
+        clients = self._subscribers.get(run_id)
+        if not clients:
+            return
         stale: list[WebSocket] = []
-        for ws in self._active:
+        for ws in list(clients):
             try:
                 await ws.send_json(message)
             except Exception:  # noqa: BLE001 - drop dead clients
                 stale.append(ws)
         for ws in stale:
-            self._active.discard(ws)
+            clients.discard(ws)
+        if not clients:
+            self._subscribers.pop(run_id, None)
 
 
 class RunStatus(BaseModel):
@@ -92,6 +108,10 @@ class RunStatus(BaseModel):
     plugin: str | None = None
     case_id: str | None = None
     message: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    models: list[str] = Field(default_factory=list)
+    plugins: list[str] = Field(default_factory=list)
 
     @property
     def progress(self) -> float:
@@ -112,23 +132,84 @@ class RunStatus(BaseModel):
             "plugin": self.plugin,
             "case_id": self.case_id,
             "message": self.message,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "models": self.models,
+            "plugins": self.plugins,
         }
 
 
-class RunManager:
-    """Shared store of active run statuses."""
+def _is_terminal(status: str) -> bool:
+    return status in ("completed", "failed")
 
-    def __init__(self) -> None:
+
+class RunManager:
+    """Shared store of live run statuses.
+
+    Active runs are kept for the whole benchmark; terminal (completed/failed)
+    statuses are retained briefly so clients can poll a just-finished run, then
+    evicted to bound memory growth.
+    """
+
+    _TERMINAL_TTL_SECONDS = 3600.0
+    _MAX_STATUSES = 200
+
+    def __init__(
+        self,
+        *,
+        terminal_ttl_seconds: float = _TERMINAL_TTL_SECONDS,
+        max_statuses: int = _MAX_STATUSES,
+    ) -> None:
         self._runs: dict[str, RunStatus] = {}
+        self._terminal_ttl_seconds = terminal_ttl_seconds
+        self._max_statuses = max_statuses
 
     def set(self, status: RunStatus) -> None:
+        self._sweep()
         self._runs[status.run_id] = status
+        self._enforce_cap()
 
     def get(self, run_id: str) -> RunStatus | None:
-        return self._runs.get(run_id)
+        status = self._runs.get(run_id)
+        if status is not None and _is_terminal(status.status) and self._is_expired(status):
+            self._runs.pop(run_id, None)
+            return None
+        return status
 
     def remove(self, run_id: str) -> None:
         self._runs.pop(run_id, None)
+
+    def active(self) -> list[RunStatus]:
+        self._sweep()
+        active = [s for s in self._runs.values() if not _is_terminal(s.status)]
+        active.sort(key=lambda s: s.started_at or "", reverse=True)
+        return active
+
+    def _is_expired(self, status: RunStatus) -> bool:
+        if status.finished_at is None:
+            return False
+        try:
+            finished = datetime.datetime.fromisoformat(status.finished_at).timestamp()
+        except ValueError:
+            return False
+        return time.time() - finished > self._terminal_ttl_seconds
+
+    def _sweep(self) -> None:
+        expired = [
+            rid
+            for rid, s in self._runs.items()
+            if _is_terminal(s.status) and self._is_expired(s)
+        ]
+        for rid in expired:
+            self._runs.pop(rid, None)
+
+    def _enforce_cap(self) -> None:
+        while len(self._runs) > self._max_statuses:
+            terminal = [s for s in self._runs.values() if _is_terminal(s.status)]
+            if not terminal:
+                break
+            oldest = min(terminal, key=lambda s: s.finished_at or "")
+            self._runs.pop(oldest.run_id, None)
 
     def on_event(self, status: RunStatus, event: Event) -> None:
         """Apply a runner event to the run's progress state."""
@@ -157,20 +238,20 @@ run_manager = RunManager()
 
 
 @app.websocket("/ws")
-async def websocket_endpoint(ws: WebSocket) -> None:
-    await manager.connect(ws)
+async def websocket_endpoint(ws: WebSocket, run_id: str | None = None) -> None:
+    await manager.connect(ws, run_id)
     try:
         while True:
             data = await ws.receive_text()
             await ws.send_json({"type": "pong", "data": data})
     except WebSocketDisconnect:
-        manager.disconnect(ws)
+        manager.disconnect(ws, run_id)
 
 
 def _schedule_broadcast(status: RunStatus, event_type: str = "progress") -> None:
     """Schedule an async broadcast from a synchronous event callback."""
     asyncio.get_running_loop().create_task(
-        manager.broadcast(status.to_message(event_type))
+        manager.broadcast(status.to_message(event_type), run_id=status.run_id)
     )
 
 
@@ -314,7 +395,7 @@ async def start_benchmark(req: RunRequest) -> dict[str, Any]:
     cfg.runner.max_retries = req.max_retries
 
     run_id = uuid.uuid4().hex[:12]
-    status = RunStatus(run_id=run_id)
+    status = RunStatus(run_id=run_id, models=req.model_names, plugins=pids)
     run_manager.set(status)
 
     wanted = set(req.model_names)
@@ -335,6 +416,7 @@ async def start_benchmark(req: RunRequest) -> dict[str, Any]:
     async def _run() -> None:
         try:
             status.status = "running"
+            status.started_at = datetime.datetime.now(datetime.UTC).isoformat()
             result = await orchestrator.run()
             repo = BenchmarkRepository(_db_path)
             try:
@@ -346,6 +428,7 @@ async def start_benchmark(req: RunRequest) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001 - surface as failed run
             status.status = "failed"
             status.message = str(exc)
+        status.finished_at = datetime.datetime.now(datetime.UTC).isoformat()
         _schedule_broadcast(status, "complete")
 
     asyncio.create_task(_run())
@@ -375,6 +458,11 @@ async def list_benchmarks(
         repo.close()
 
 
+@app.get("/api/benchmarks/active")
+async def list_active_runs() -> dict[str, Any]:
+    return {"runs": [s.to_message("status") for s in run_manager.active()]}
+
+
 @app.get("/api/benchmarks/{run_id}")
 async def get_benchmark(run_id: str) -> dict[str, Any]:
     repo = BenchmarkRepository(_db_path)
@@ -387,8 +475,41 @@ async def get_benchmark(run_id: str) -> dict[str, Any]:
         repo.close()
 
 
+def _active_run_ids(run_ids: list[str]) -> list[str]:
+    """Return the subset of ids still pending/running in the live manager."""
+    return [
+        rid
+        for rid in run_ids
+        if (status := run_manager.get(rid)) is not None and not _is_terminal(status.status)
+    ]
+
+
+class DeleteRunsRequest(BaseModel):
+    run_ids: list[str] = Field(..., min_length=1)
+
+
+@app.post("/api/benchmarks/delete")
+async def delete_benchmarks(req: DeleteRunsRequest) -> dict[str, Any]:
+    active = _active_run_ids(req.run_ids)
+    if active:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot delete active run(s): {', '.join(active)}",
+        )
+    repo = BenchmarkRepository(_db_path)
+    try:
+        deleted = repo.delete_runs(req.run_ids)
+    finally:
+        repo.close()
+    for rid in req.run_ids:
+        run_manager.remove(rid)
+    return {"deleted": req.run_ids[:deleted], "count": deleted, "status": "ok"}
+
+
 @app.delete("/api/benchmarks/{run_id}")
 async def delete_benchmark(run_id: str) -> dict[str, Any]:
+    if _active_run_ids([run_id]):
+        raise HTTPException(status_code=409, detail="Cannot delete an active run")
     repo = BenchmarkRepository(_db_path)
     try:
         if not repo.delete_run(run_id):

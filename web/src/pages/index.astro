@@ -21,6 +21,11 @@ import MainLayout from '../layouts/MainLayout.astro';
     </div>
   </div>
 
+  <h2>Active Runs</h2>
+  <div id="active-runs">
+    <p style="color: #94a3b8;">Checking for active runs…</p>
+  </div>
+
   <h2>Available Models</h2>
   <div id="models" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem;"></div>
 
@@ -28,8 +33,7 @@ import MainLayout from '../layouts/MainLayout.astro';
   <div id="runs"></div>
 
   <script>
-    const esc = (s) =>
-      String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    import { esc, toast, confirmModal } from '../scripts/ui.js';
 
     const modelCard = (m) => `
       <div style="background:#1e293b; padding:1.5rem; border-radius:.5rem; border:1px solid #334155;">
@@ -61,13 +65,39 @@ import MainLayout from '../layouts/MainLayout.astro';
                 <td style="padding:1rem; font-family:monospace; font-size:.875rem;">${esc(run.run_id)}</td>
                 <td style="padding:1rem;">${new Date(run.timestamp).toLocaleString()}</td>
                 <td style="padding:1rem;">${esc(run.model_names ? run.model_names.join(', ') : '-')}</td>
-                <td style="text-align:right; padding:1rem;">
-                  <a href="/compare?run=${esc(run.run_id)}" style="color:#3b82f6; text-decoration:none; font-weight:500;">View</a>
+                <td style="text-align:right; padding:1rem; white-space:nowrap;">
+                  <a href="/compare?run=${esc(run.run_id)}" style="color:#3b82f6; text-decoration:none; font-weight:500; margin-right:1rem;">View</a>
+                  <button data-delete="${esc(run.run_id)}" style="background:transparent; color:#ef4444; border:1px solid #7f1d1d; padding:.25rem .625rem; border-radius:.375rem; cursor:pointer; font-size:.875rem;">Delete</button>
                 </td>
               </tr>`).join('')}
           </tbody>
         </table>
       </div>`;
+
+    const activeRuns = (runs) => {
+      if (!runs.length) return '<p style="color:#64748b;">No benchmarks running.</p>';
+      return runs.map((run) => {
+        const pct = Math.round((run.progress || 0) * 100);
+        const queued = run.status === 'pending';
+        const detail = [run.model, run.plugin].filter(Boolean).join(' · ') || (run.models || []).join(', ');
+        return `
+          <div style="background:#1e293b;padding:1rem;border-radius:.5rem;border:1px solid #334155;margin-bottom:.75rem;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem;gap:1rem;">
+              <div style="min-width:0;">
+                <span style="font-family:monospace;font-size:.875rem;color:#e2e8f0;">${esc(run.run_id)}</span>
+                ${detail ? `<span style="margin-left:.5rem;color:#94a3b8;font-size:.875rem;">${esc(detail)}</span>` : ''}
+              </div>
+              <div style="display:flex;gap:.75rem;align-items:center;white-space:nowrap;">
+                <span style="color:#f59e0b;font-size:.875rem;">${queued ? 'Queued…' : `${pct}% complete`}</span>
+                <a href="/run?run=${esc(run.run_id)}" style="color:#3b82f6;text-decoration:none;font-weight:500;">Track →</a>
+              </div>
+            </div>
+            <div style="background:#0f172a;height:.625rem;border-radius:.375rem;overflow:hidden;border:1px solid #334155;">
+              <div style="background:${queued ? '#f59e0b' : '#3b82f6'};height:100%;width:${pct}%;transition:width .3s;"></div>
+            </div>
+          </div>`;
+      }).join('');
+    };
 
     async function load() {
       const errEl = document.getElementById('error');
@@ -78,12 +108,13 @@ import MainLayout from '../layouts/MainLayout.astro';
         ]);
         if (!modelsRes.ok || !runsRes.ok) throw new Error('Failed to fetch data');
         const models = (await modelsRes.json()).models || [];
-        const runs = ((await runsRes.json()).runs || []).slice(0, 5);
+        const allRuns = (await runsRes.json()).runs || [];
+        const runs = allRuns.slice(0, 5);
 
         document.getElementById('stat-models').textContent = models.length;
-        document.getElementById('stat-runs').textContent = runs.length;
-        document.getElementById('stat-last').textContent = runs[0]
-          ? new Date(runs[0].timestamp).toLocaleDateString()
+        document.getElementById('stat-runs').textContent = allRuns.length;
+        document.getElementById('stat-last').textContent = allRuns[0]
+          ? new Date(allRuns[0].timestamp).toLocaleDateString()
           : 'Never';
 
         const modelsEl = document.getElementById('models');
@@ -97,6 +128,44 @@ import MainLayout from '../layouts/MainLayout.astro';
         errEl.textContent = `Error: ${e.message}`;
       }
     }
+
+    async function loadActive() {
+      try {
+        const res = await fetch('/api/benchmarks/active');
+        if (!res.ok) return;
+        const runs = (await res.json()).runs || [];
+        document.getElementById('active-runs').innerHTML = activeRuns(runs);
+      } catch (e) {
+        // Backend briefly unreachable; keep the previous render.
+      }
+    }
+
+    async function deleteRun(runId, btn) {
+      const confirmed = await confirmModal({
+        title: 'Delete benchmark?',
+        body: `Delete benchmark ${runId}? This cannot be undone.`,
+        confirmLabel: 'Delete',
+      });
+      if (!confirmed) return;
+      btn.disabled = true;
+      try {
+        const res = await fetch(`/api/benchmarks/${encodeURIComponent(runId)}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error(`Delete failed (HTTP ${res.status})`);
+        toast('Benchmark deleted', 'success');
+        load();
+      } catch (err) {
+        btn.disabled = false;
+        toast(`Error: ${err.message}`, 'error');
+      }
+    }
+
+    document.getElementById('runs').addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-delete]');
+      if (btn) deleteRun(btn.dataset.delete, btn);
+    });
+
     load();
+    loadActive();
+    setInterval(loadActive, 3000);
   </script>
 </MainLayout>

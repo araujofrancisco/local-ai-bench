@@ -11,15 +11,20 @@ import MainLayout from '../layouts/MainLayout.astro';
   </div>
 
   <script>
-    const esc = (s) =>
-      String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    import { esc, toast, confirmModal } from '../scripts/ui.js';
 
     const fmt = (v, d) => (v === null || v === undefined ? '-' : Number(v).toFixed(d));
 
     const scoreColor = (s) =>
       s === null || s === undefined ? 'inherit' : s >= 0.8 ? '#10b981' : s >= 0.5 ? '#f59e0b' : '#ef4444';
 
-    const compareTable = (rows) => `
+    const compareTable = (rows, runId) => {
+      const header = runId ? `
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; background:#1e293b; padding:.75rem 1rem; border-radius:.5rem; border:1px solid #334155;">
+          <span style="color:#94a3b8; font-size:.875rem;">Run <code style="background:#0f172a; padding:.125rem .375rem; border-radius:.25rem;">${esc(runId)}</code></span>
+          <button data-delete-run style="background:transparent; color:#ef4444; border:1px solid #7f1d1d; padding:.375rem .875rem; border-radius:.375rem; cursor:pointer; font-size:.875rem;">Delete run</button>
+        </div>` : '';
+      return header + `
       <div style="overflow-x:auto; background:#1e293b; border-radius:.5rem; border:1px solid #334155;">
         <table style="width:100%; border-collapse:collapse;">
           <thead>
@@ -53,6 +58,7 @@ import MainLayout from '../layouts/MainLayout.astro';
         <a href="/run" style="background:#3b82f6; color:white; padding:.75rem 2rem; border-radius:.375rem; text-decoration:none; font-weight:500;">Run More Benchmarks</a>
         <a href="/history" style="background:#64748b; color:white; padding:.75rem 2rem; border-radius:.375rem; text-decoration:none; font-weight:500;">View History</a>
       </div>`;
+    };
 
     const emptyState = () => `
       <div style="background:#1e293b; padding:2rem; border-radius:.5rem; border:1px solid #334155; text-align:center;">
@@ -60,23 +66,47 @@ import MainLayout from '../layouts/MainLayout.astro';
         <a href="/run" style="color:#3b82f6; text-decoration:none; font-weight:500;">Run your first benchmark →</a>
       </div>`;
 
+    let currentRunId = null;
+
+    async function deleteRun(runId) {
+      const confirmed = await confirmModal({
+        title: 'Delete benchmark?',
+        body: `Delete benchmark ${runId}? This cannot be undone.`,
+        confirmLabel: 'Delete',
+      });
+      if (!confirmed) return;
+      try {
+        const res = await fetch(`/api/benchmarks/${encodeURIComponent(runId)}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error(`Delete failed (HTTP ${res.status})`);
+        toast('Benchmark deleted', 'success');
+        location.href = '/history';
+      } catch (err) {
+        toast(`Error: ${err.message}`, 'error');
+      }
+    }
+
     async function load() {
       const el = document.getElementById('compare');
       const errEl = document.getElementById('error');
       try {
-        const runId = new URLSearchParams(location.search).get('run');
-        const url = runId ? `/api/benchmarks/${encodeURIComponent(runId)}` : '/api/compare';
+        currentRunId = new URLSearchParams(location.search).get('run');
+        const url = currentRunId ? `/api/benchmarks/${encodeURIComponent(currentRunId)}` : '/api/compare';
         const res = await fetch(url);
         if (!res.ok) throw new Error('Failed to fetch comparison');
         const data = await res.json();
         const rows = data.models || [];
-        el.innerHTML = rows.length ? compareTable(rows) : emptyState();
+        el.innerHTML = rows.length ? compareTable(rows, currentRunId) : emptyState();
       } catch (e) {
         el.innerHTML = '';
         errEl.style.display = 'block';
         errEl.textContent = `Error: ${e.message}`;
       }
     }
+
+    document.getElementById('compare').addEventListener('click', (e) => {
+      if (e.target.closest('button[data-delete-run]') && currentRunId) deleteRun(currentRunId);
+    });
+
     load();
   </script>
 </MainLayout>

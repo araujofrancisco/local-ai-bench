@@ -19,14 +19,19 @@ SQLite for comparison. It ships with both a terminal CLI and a web UI
   drop-in local plugins (`.py` files, no core changes).
 - **Model discovery** — models are auto-detected from each configured host and
   selected with globs or interactively.
-- **Web UI** — dashboard, run (with live WebSocket progress), comparison,
-  history, and plugin management.
+- **Web UI** — dashboard (with a live **Active Runs** panel), run (with live
+  WebSocket progress), comparison, history, and plugin management.
+- **Background runs** — benchmarks run as server-side detached tasks; see their
+  live status from any page via the dashboard Active Runs panel and the History
+  running/queued chips (`GET /api/benchmarks/active`).
 - **Run resume** — navigate away from the Run page mid-benchmark and come back;
-  the active run's status is restored automatically.
+  the active run's status is restored automatically. Open `/run?run=<id>` to
+  track a specific run from anywhere.
 - **Plugin options** — view plugin details and edit their options in the UI;
   settings persist in SQLite and are merged over config defaults at run time.
 - **History filters + deletion** — filter runs by model, host, date range, and
-  run-ID search; delete runs and all their case data.
+  run-ID search; delete single runs or select multiple for **bulk delete**
+  (active runs are protected with a 409). See running runs with status chips.
 - **Reports & exports** — JSON/Markdown/HTML reports and per-run
   `json|csv|md` exports.
 - **Retries and error isolation** — a failed case, plugin, or host never aborts
@@ -71,8 +76,8 @@ ollama-bench run --models 'qwen*'
 ┌──────────────────────────  Single container  ─────────────────────────┐
 │                                                                        │
 │   Browser ──▶ FastAPI ──▶ Astro static assets (compiled at build)      │
-│                 │  ├─ /api/* (JSON)                                    │
-│                 │  └─ /ws   (live progress)                            │
+│                 │  ├─ /api/* (JSON, incl. /api/benchmarks/active)      │
+│                 │  └─ /ws?run_id=<id>   (live progress, per-run)      │
 │                 ▼                                                      │
 │        SQLite (/data/benchmark.db)          Ollama host(s)             │
 │        + plugin options overrides          (HTTP /api/chat, /api/tags) │
@@ -125,10 +130,10 @@ selected at run time.
 
 | Page | URL | Notes |
 | --- | --- | --- |
-| Dashboard | `/` | Model cards, stats, recent runs |
-| Run | `/run` | Start benchmarks; live progress; resumes active runs |
-| Compare | `/compare` | Side-by-side performance (`?run=<id>` for one run) |
-| History | `/history` | Filter by model/host/date/search; delete runs |
+| Dashboard | `/` | Model cards, stats, recent runs (delete here too), live Active Runs panel |
+| Run | `/run` | Start benchmarks; live progress; resumes active runs (`?run=<id>` to track) |
+| Compare | `/compare` | Side-by-side performance (`?run=<id>` for one run, with a delete action) |
+| History | `/history` | Filter by model/host/date/search; running-status chips; single + bulk delete |
 | Plugins | `/plugins` | Details, modalities, and an options editor |
 
 ---
@@ -167,8 +172,3 @@ cd web && npm run build && npm run test:pages   # build + jsdom page smoke tests
 
 See [docs/deployment.md#development](docs/deployment.md#development-run-without-docker).
 
----
-
-## License
-
-MIT — see [LICENSE](LICENSE).
