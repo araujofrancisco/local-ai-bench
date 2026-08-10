@@ -1,0 +1,254 @@
+---
+import MainLayout from '../layouts/MainLayout.astro';
+---
+<MainLayout title="Run Benchmark">
+  <h1>Run Benchmark</h1>
+
+  <div id="load-error" style="display: none; background: #ef4444; color: white; padding: 1rem; border-radius: 0.5rem; margin-bottom: 2rem;"></div>
+
+  <div id="empty-models" style="display: none; background: #1e293b; padding: 2rem; border-radius: 0.5rem; border: 1px solid #334155; text-align: center;">
+    <p style="color: #94a3b8; margin-bottom: 1rem;">No models discovered. Make sure Ollama is running and reachable.</p>
+  </div>
+
+  <form id="benchmark-form" style="display: none; background: #1e293b; padding: 2rem; border-radius: 0.5rem; border: 1px solid #334155;">
+    <div style="margin-bottom: 1.5rem;">
+      <label style="display: block; margin-bottom: 0.5rem; font-weight: 500;">Select Models</label>
+      <select id="models" multiple style="width: 100%; min-height: 200px; background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 0.375rem; padding: 0.5rem;"></select>
+      <div style="color: #94a3b8; font-size: 0.875rem; margin-top: 0.25rem;">Hold Ctrl/Cmd to select multiple</div>
+    </div>
+
+    <div style="margin-bottom: 1.5rem;">
+      <label style="display: block; margin-bottom: 0.5rem; font-weight: 500;">Plugins</label>
+      <div id="plugin-list" style="display: flex; flex-wrap: wrap; gap: 0.75rem;"></div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+      <div>
+        <label style="display: block; margin-bottom: 0.5rem; font-weight: 500;">Repetitions</label>
+        <input type="number" id="repetitions" value="1" min="1" max="10" style="width: 100%; background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 0.375rem; padding: 0.5rem;" />
+      </div>
+      <div>
+        <label style="display: block; margin-bottom: 0.5rem; font-weight: 500;">Warmup Runs</label>
+        <input type="number" id="warmup" value="0" min="0" max="5" style="width: 100%; background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 0.375rem; padding: 0.5rem;" />
+      </div>
+      <div>
+        <label style="display: block; margin-bottom: 0.5rem; font-weight: 500;">Max Retries</label>
+        <input type="number" id="retries" value="1" min="0" max="5" style="width: 100%; background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 0.375rem; padding: 0.5rem;" />
+      </div>
+    </div>
+
+    <button type="submit" style="background: #3b82f6; color: white; border: none; padding: 0.75rem 2rem; border-radius: 0.375rem; font-weight: 500; cursor: pointer; font-size: 1rem;">
+      Start Benchmark
+    </button>
+  </form>
+
+  <div id="loading" style="color: #94a3b8;">Loading models and plugins…</div>
+
+  <div id="progress" style="display: none; margin-top: 2rem;">
+    <h2>Running Benchmark...</h2>
+    <div style="background: #1e293b; height: 2rem; border-radius: 0.5rem; overflow: hidden; border: 1px solid #334155;">
+      <div id="progress-fill" style="background: #3b82f6; height: 100%; width: 0%; transition: width 0.3s;"></div>
+    </div>
+    <div id="progress-text" style="margin-top: 0.5rem; color: #94a3b8;"></div>
+    <div id="progress-detail" style="margin-top: 0.25rem; color: #64748b; font-size: 0.875rem;"></div>
+  </div>
+
+  <div id="results" style="margin-top: 2rem;"></div>
+
+  <script>
+    const esc = (s) =>
+      String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+    const wsUrl = () => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
+
+    const ACTIVE_RUN_KEY = 'ollama-bench.active-run';
+    const storeRun = (runId) => { try { localStorage.setItem(ACTIVE_RUN_KEY, runId); } catch (e) {} };
+    const clearRun = () => { try { localStorage.removeItem(ACTIVE_RUN_KEY); } catch (e) {} };
+
+    async function loadOptions() {
+      const loading = document.getElementById('loading');
+      const errEl = document.getElementById('load-error');
+      try {
+        const [modelsRes, pluginsRes] = await Promise.all([
+          fetch('/api/models'),
+          fetch('/api/plugins'),
+        ]);
+        if (!modelsRes.ok || !pluginsRes.ok) throw new Error('Failed to fetch data');
+
+        const models = (await modelsRes.json()).models || [];
+        const plugins = (await pluginsRes.json()).plugins || [];
+
+        loading.style.display = 'none';
+        if (!models.length) {
+          document.getElementById('empty-models').style.display = 'block';
+          return;
+        }
+
+        const select = document.getElementById('models');
+        select.innerHTML = models
+          .filter((m) => m.name)
+          .map((m) => `<option value="${esc(m.name)}">${esc(m.name)} (${esc(m.host)})</option>`)
+          .join('');
+
+        const pluginList = document.getElementById('plugin-list');
+        pluginList.innerHTML = plugins
+          .map((p) => `
+            <label style="display:flex; align-items:center; gap:.5rem; cursor:pointer;">
+              <input type="checkbox" value="${esc(p.id)}" checked style="width:1.25rem; height:1.25rem; accent-color:#3b82f6;" />
+              <span>${esc(p.name)}</span>
+            </label>`)
+          .join('');
+
+        document.getElementById('benchmark-form').style.display = 'block';
+      } catch (e) {
+        loading.style.display = 'none';
+        errEl.style.display = 'block';
+        errEl.textContent = `Error: ${e.message}`;
+      }
+    }
+
+    const form = document.getElementById('benchmark-form');
+    const progressDiv = document.getElementById('progress');
+    const progressFill = document.getElementById('progress-fill');
+    const progressText = document.getElementById('progress-text');
+    const progressDetail = document.getElementById('progress-detail');
+    const resultsDiv = document.getElementById('results');
+
+    let poller = null;
+    let ws = null;
+    let settled = false;
+
+    function showProgress(runId) {
+      progressDiv.style.display = 'block';
+      resultsDiv.innerHTML = '';
+      progressFill.style.width = '0%';
+      progressText.textContent = 'Starting…';
+      progressDetail.textContent = '';
+      settled = false;
+
+      try {
+        ws = new WebSocket(wsUrl());
+        ws.onmessage = (e) => {
+          const msg = JSON.parse(e.data);
+          if (msg.type !== 'progress' && msg.type !== 'complete') return;
+          if (msg.run_id && msg.run_id !== runId) return;
+          renderProgress(msg, runId);
+        };
+        ws.onerror = () => {
+          progressDetail.textContent = 'Live updates unavailable; polling status.';
+        };
+      } catch (err) {
+        // WebSocket unavailable — the poller below is the fallback.
+      }
+
+      poller = setInterval(async () => {
+        try {
+          const res = await fetch(`/api/benchmarks/${runId}/status`);
+          if (res.ok) renderProgress(await res.json(), runId);
+        } catch (err) {
+          // Backend briefly unreachable; keep polling.
+        }
+      }, 2500);
+    }
+
+    function renderProgress(msg, runId) {
+      progressFill.style.width = `${Math.round((msg.progress || 0) * 100)}%`;
+      if (msg.total > 0) {
+        progressText.textContent = `Completed ${msg.completed} of ${msg.total} cases (${msg.errors} errors)`;
+      }
+      const detail = [msg.model, msg.plugin, msg.case_id].filter(Boolean).join(' · ');
+      if (detail) progressDetail.textContent = detail;
+
+      const terminal = msg.status === 'completed' || msg.status === 'failed';
+      if (terminal || msg.type === 'complete') {
+        if (poller) clearInterval(poller);
+        if (ws) ws.close();
+        if (settled) return;
+        settled = true;
+        progressDiv.style.display = 'none';
+        const ok = msg.status === 'completed';
+        resultsDiv.innerHTML = ok
+          ? `<p style="color: #10b981;">✓ Benchmark completed! <a href="/compare?run=${esc(runId)}" style="color: #3b82f6;">View results</a></p>`
+          : `<p style="color: #ef4444;">Benchmark failed: ${esc(msg.message || 'unknown error')}</p>`;
+        clearRun();
+      }
+    }
+
+    async function resumeActiveRun(runId) {
+      try {
+        const res = await fetch(`/api/benchmarks/${runId}/status`);
+        if (res.ok) {
+          const msg = await res.json();
+          if (msg.status === 'running' || msg.status === 'pending') {
+            showProgress(runId);
+            return;
+          }
+          renderProgress({ ...msg, type: 'complete' }, runId);
+          return;
+        }
+      } catch (err) {
+        // status unavailable — fall through to the persisted-run check
+      }
+      try {
+        const res = await fetch(`/api/benchmarks/${runId}`);
+        if (res.ok) {
+          renderProgress(
+            { run_id: runId, status: 'completed', type: 'complete', progress: 1, total: 1, completed: 1 },
+            runId
+          );
+          return;
+        }
+      } catch (err) {
+        // run is gone — treat as unknown
+      }
+      clearRun();
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const modelSelect = document.getElementById('models');
+      const selectedModels = Array.from(modelSelect.selectedOptions).map((o) => o.value);
+      const selectedPlugins = Array.from(document.querySelectorAll('#benchmark-form input[type="checkbox"]:checked')).map((cb) => cb.value);
+      const repetitions = parseInt(document.getElementById('repetitions').value);
+      const warmup = parseInt(document.getElementById('warmup').value);
+      const retries = parseInt(document.getElementById('retries').value);
+
+      if (selectedModels.length === 0) {
+        alert('Please select at least one model');
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/benchmarks/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model_names: selectedModels,
+            plugin_ids: selectedPlugins,
+            repetitions,
+            warmup_runs: warmup,
+            max_retries: retries,
+          }),
+        });
+
+        if (!res.ok) throw new Error('Failed to start benchmark');
+
+        const data = await res.json();
+        storeRun(data.run_id);
+        showProgress(data.run_id);
+      } catch (err) {
+        resultsDiv.innerHTML = `<p style="color: #ef4444;">Error: ${esc(err.message)}</p>`;
+        progressDiv.style.display = 'none';
+      }
+    });
+
+    async function boot() {
+      const activeRun = localStorage.getItem(ACTIVE_RUN_KEY);
+      if (activeRun) await resumeActiveRun(activeRun);
+      loadOptions();
+    }
+
+    boot();
+  </script>
+</MainLayout>

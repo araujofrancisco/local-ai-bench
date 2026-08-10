@@ -1,0 +1,82 @@
+---
+import MainLayout from '../layouts/MainLayout.astro';
+---
+<MainLayout title="Compare Models">
+  <h1>Model Comparison</h1>
+
+  <div id="error" style="display: none; background: #ef4444; color: white; padding: 1rem; border-radius: 0.5rem; margin-bottom: 2rem;"></div>
+
+  <div id="compare">
+    <p style="color: #94a3b8;">Loading comparison…</p>
+  </div>
+
+  <script>
+    const esc = (s) =>
+      String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+    const fmt = (v, d) => (v === null || v === undefined ? '-' : Number(v).toFixed(d));
+
+    const scoreColor = (s) =>
+      s === null || s === undefined ? 'inherit' : s >= 0.8 ? '#10b981' : s >= 0.5 ? '#f59e0b' : '#ef4444';
+
+    const compareTable = (rows) => `
+      <div style="overflow-x:auto; background:#1e293b; border-radius:.5rem; border:1px solid #334155;">
+        <table style="width:100%; border-collapse:collapse;">
+          <thead>
+            <tr style="border-bottom:1px solid #334155;">
+              <th style="text-align:left; padding:1rem; color:#94a3b8; font-weight:500;">Model</th>
+              <th style="text-align:right; padding:1rem; color:#94a3b8; font-weight:500;">Score</th>
+              <th style="text-align:right; padding:1rem; color:#94a3b8; font-weight:500;">p50 (ms)</th>
+              <th style="text-align:right; padding:1rem; color:#94a3b8; font-weight:500;">p95 (ms)</th>
+              <th style="text-align:right; padding:1rem; color:#94a3b8; font-weight:500;">TTFT p50</th>
+              <th style="text-align:right; padding:1rem; color:#94a3b8; font-weight:500;">Tokens/s</th>
+              <th style="text-align:right; padding:1rem; color:#94a3b8; font-weight:500;">Cases</th>
+              <th style="text-align:right; padding:1rem; color:#94a3b8; font-weight:500;">Errors</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map((row, i) => `
+              <tr style="border-bottom:1px solid #334155; background:${i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)'};">
+                <td style="padding:1rem; font-weight:500;">${esc(row.model_name)}</td>
+                <td style="text-align:right; padding:1rem; color:${scoreColor(row.overall_score)};">${fmt(row.overall_score, 3)}</td>
+                <td style="text-align:right; padding:1rem;">${fmt(row.latency_p50_ms, 1)}</td>
+                <td style="text-align:right; padding:1rem;">${fmt(row.latency_p95_ms, 1)}</td>
+                <td style="text-align:right; padding:1rem;">${fmt(row.time_to_first_token_p50_ms, 1)}</td>
+                <td style="text-align:right; padding:1rem;">${fmt(row.tokens_per_second, 1)}</td>
+                <td style="text-align:right; padding:1rem;">${row.cases_run || 0}</td>
+                <td style="text-align:right; padding:1rem; color:${row.errors > 0 ? '#ef4444' : 'inherit'};">${row.errors || 0}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div style="margin-top:2rem; display:flex; gap:1rem;">
+        <a href="/run" style="background:#3b82f6; color:white; padding:.75rem 2rem; border-radius:.375rem; text-decoration:none; font-weight:500;">Run More Benchmarks</a>
+        <a href="/history" style="background:#64748b; color:white; padding:.75rem 2rem; border-radius:.375rem; text-decoration:none; font-weight:500;">View History</a>
+      </div>`;
+
+    const emptyState = () => `
+      <div style="background:#1e293b; padding:2rem; border-radius:.5rem; border:1px solid #334155; text-align:center;">
+        <p style="color:#94a3b8; margin-bottom:1rem;">No benchmark data available yet.</p>
+        <a href="/run" style="color:#3b82f6; text-decoration:none; font-weight:500;">Run your first benchmark →</a>
+      </div>`;
+
+    async function load() {
+      const el = document.getElementById('compare');
+      const errEl = document.getElementById('error');
+      try {
+        const runId = new URLSearchParams(location.search).get('run');
+        const url = runId ? `/api/benchmarks/${encodeURIComponent(runId)}` : '/api/compare';
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('Failed to fetch comparison');
+        const data = await res.json();
+        const rows = data.models || [];
+        el.innerHTML = rows.length ? compareTable(rows) : emptyState();
+      } catch (e) {
+        el.innerHTML = '';
+        errEl.style.display = 'block';
+        errEl.textContent = `Error: ${e.message}`;
+      }
+    }
+    load();
+  </script>
+</MainLayout>

@@ -1,0 +1,112 @@
+---
+import MainLayout from '../layouts/MainLayout.astro';
+---
+<MainLayout title="Plugins">
+  <h1>Plugins</h1>
+
+  <div id="error" style="display: none; background: #ef4444; color: white; padding: 1rem; border-radius: 0.5rem; margin-bottom: 2rem;"></div>
+
+  <div id="plugins" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem;">
+    <p style="color: #94a3b8;">Loading plugins…</p>
+  </div>
+
+  <script>
+    const esc = (s) =>
+      String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+    const optionControl = (key, value) => {
+      if (typeof value === 'boolean') {
+        return `<label style="display:flex;align-items:center;gap:.5rem;margin-bottom:.5rem;cursor:pointer;">
+          <input type="checkbox" data-key="${esc(key)}" ${value ? 'checked' : ''} style="width:1.25rem;height:1.25rem;accent-color:#3b82f6;">
+          <span>${esc(key)}</span>
+        </label>`;
+      }
+      const type = typeof value === 'number' ? 'number' : 'text';
+      return `<label style="display:block;margin-bottom:.5rem;">
+        <span style="display:block;font-size:.75rem;color:#94a3b8;margin-bottom:.25rem;">${esc(key)}</span>
+        <input type="${type}" data-key="${esc(key)}" value="${esc(value)}" style="width:100%;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:.375rem;padding:.375rem .5rem;">
+      </label>`;
+    };
+
+    const pluginCard = (p) => {
+      const opts = p.options || {};
+      const keys = Object.keys(opts);
+      const optionsEditor = keys.length
+        ? `<form data-plugin="${esc(p.id)}" style="margin-top:.75rem;border-top:1px solid #334155;padding-top:.75rem;">
+             ${keys.map((k) => optionControl(k, opts[k])).join('')}
+             <button type="submit" style="background:#3b82f6;color:#fff;border:none;padding:.375rem .875rem;border-radius:.375rem;font-size:.875rem;cursor:pointer;">Save</button>
+             <span class="save-status" style="margin-left:.5rem;font-size:.875rem;color:#94a3b8;"></span>
+           </form>`
+        : '<p style="color:#64748b;font-size:.875rem;margin-top:.75rem;">No configurable options.</p>';
+      return `
+        <div style="background:#1e293b; padding:1.5rem; border-radius:.5rem; border:1px solid #334155; display:flex; flex-direction:column;">
+          <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:.5rem;">
+            <h3 style="color:#f1f5f9; font-size:1.125rem;">${esc(p.name)}</h3>
+            <span style="background:#334155; color:#94a3b8; padding:.25rem .5rem; border-radius:.25rem; font-size:.75rem;">${esc(p.category)}</span>
+          </div>
+          ${p.description ? `<p style="color:#cbd5e1; font-size:.875rem; margin-bottom:.75rem;">${esc(p.description)}</p>` : ''}
+          <div style="color:#94a3b8; font-size:.875rem; margin-bottom:.5rem;">
+            ID: <code style="background:#0f172a; padding:.125rem .375rem; border-radius:.25rem;">${esc(p.id)}</code>
+          </div>
+          <div style="color:#94a3b8; font-size:.875rem; margin-bottom:.5rem;">
+            Version: ${esc(p.version)} · Dataset: ${esc(p.dataset_version || 'v1')}
+          </div>
+          <div style="display:flex; flex-wrap:wrap; gap:.375rem; margin-bottom:.5rem;">
+            ${(p.modalities || []).map((m) => `<span style="background:rgba(59,130,246,.15); color:#93c5fd; padding:.125rem .5rem; border-radius:.25rem; font-size:.75rem;">${esc(m)}</span>`).join('')}
+          </div>
+          <details style="margin-top:auto;">
+            <summary style="color:#3b82f6; cursor:pointer; font-size:.875rem;">Options</summary>
+            ${optionsEditor}
+          </details>
+        </div>`;
+    };
+
+    async function load() {
+      const el = document.getElementById('plugins');
+      const errEl = document.getElementById('error');
+      try {
+        const res = await fetch('/api/plugins');
+        if (!res.ok) throw new Error('Failed to fetch plugins');
+        const plugins = (await res.json()).plugins || [];
+        el.innerHTML = plugins.length
+          ? plugins.map(pluginCard).join('')
+          : '<p style="color:#94a3b8;">No plugins loaded.</p>';
+      } catch (e) {
+        el.innerHTML = '';
+        errEl.style.display = 'block';
+        errEl.textContent = `Error: ${e.message}`;
+      }
+    }
+
+    document.getElementById('plugins').addEventListener('submit', async (e) => {
+      const form = e.target;
+      if (!form.matches('form[data-plugin]')) return;
+      e.preventDefault();
+      const pluginId = form.dataset.plugin;
+      const options = {};
+      form.querySelectorAll('[data-key]').forEach((input) => {
+        let value;
+        if (input.type === 'checkbox') value = input.checked;
+        else if (input.type === 'number') value = input.value === '' ? null : Number(input.value);
+        else value = input.value;
+        options[input.dataset.key] = value;
+      });
+      const status = form.querySelector('.save-status');
+      status.textContent = 'Saving…';
+      try {
+        const res = await fetch(`/api/plugins/${encodeURIComponent(pluginId)}/options`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ options }),
+        });
+        if (!res.ok) throw new Error('Failed to save options');
+        status.textContent = 'Saved ✓';
+        setTimeout(load, 400);
+      } catch (err) {
+        status.textContent = `Error: ${err.message}`;
+      }
+    });
+
+    load();
+  </script>
+</MainLayout>

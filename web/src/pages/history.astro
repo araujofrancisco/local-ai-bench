@@ -1,0 +1,142 @@
+---
+import MainLayout from '../layouts/MainLayout.astro';
+---
+<MainLayout title="Benchmark History">
+  <h1>Benchmark History</h1>
+
+  <div id="error" style="display: none; background: #ef4444; color: white; padding: 1rem; border-radius: 0.5rem; margin-bottom: 2rem;"></div>
+
+  <div id="filters" style="display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; margin-bottom: 1.5rem; background: #1e293b; padding: 1rem; border-radius: 0.5rem; border: 1px solid #334155;">
+    <input id="f-search" type="text" placeholder="Search run ID…" style="background:#0f172a; color:#e2e8f0; border:1px solid #334155; border-radius:.375rem; padding:.5rem .75rem; flex:1; min-width:140px;" />
+    <select id="f-model" style="background:#0f172a; color:#e2e8f0; border:1px solid #334155; border-radius:.375rem; padding:.5rem;">
+      <option value="">All models</option>
+    </select>
+    <select id="f-host" style="background:#0f172a; color:#e2e8f0; border:1px solid #334155; border-radius:.375rem; padding:.5rem;">
+      <option value="">All hosts</option>
+    </select>
+    <input id="f-from" type="date" title="From date" style="background:#0f172a; color-scheme:dark; color:#e2e8f0; border:1px solid #334155; border-radius:.375rem; padding:.5rem;" />
+    <span style="color:#64748b;">to</span>
+    <input id="f-to" type="date" title="To date" style="background:#0f172a; color-scheme:dark; color:#e2e8f0; border:1px solid #334155; border-radius:.375rem; padding:.5rem;" />
+    <button id="f-reset" style="background:#334155; color:#e2e8f0; border:none; padding:.5rem .875rem; border-radius:.375rem; cursor:pointer;">Reset</button>
+  </div>
+
+  <div id="history">
+    <p style="color: #94a3b8;">Loading history…</p>
+  </div>
+
+  <script>
+    const esc = (s) =>
+      String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+    const runsTable = (runs) => `
+      <div style="background:#1e293b; border-radius:.5rem; border:1px solid #334155; overflow:hidden;">
+        <table style="width:100%; border-collapse:collapse;">
+          <thead>
+            <tr style="border-bottom:1px solid #334155; background:rgba(255,255,255,0.02);">
+              <th style="text-align:left; padding:1rem; color:#94a3b8; font-weight:500;">Run ID</th>
+              <th style="text-align:left; padding:1rem; color:#94a3b8; font-weight:500;">Timestamp</th>
+              <th style="text-align:left; padding:1rem; color:#94a3b8; font-weight:500;">Models</th>
+              <th style="text-align:left; padding:1rem; color:#94a3b8; font-weight:500;">Hosts</th>
+              <th style="text-align:right; padding:1rem; color:#94a3b8; font-weight:500;">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${runs.map((run, i) => `
+              <tr style="border-bottom:1px solid #334155; background:${i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)'};">
+                <td style="padding:1rem; font-family:monospace; font-size:.875rem;">${esc(run.run_id)}</td>
+                <td style="padding:1rem;">${new Date(run.timestamp).toLocaleString()}</td>
+                <td style="padding:1rem;">${esc((run.model_names || []).join(', ') || '-')}</td>
+                <td style="padding:1rem;">${esc((run.hosts || []).map(h => h.name).join(', ') || '-')}</td>
+                <td style="text-align:right; padding:1rem; white-space:nowrap;">
+                  <a href="/compare?run=${esc(run.run_id)}" style="color:#3b82f6; text-decoration:none; margin-right:1rem;">Compare</a>
+                  <button data-delete="${esc(run.run_id)}" style="background:transparent; color:#ef4444; border:1px solid #7f1d1d; padding:.25rem .625rem; border-radius:.375rem; cursor:pointer; font-size:.875rem;">Delete</button>
+                </td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+
+    function currentQuery() {
+      const p = new URLSearchParams();
+      const search = document.getElementById('f-search').value.trim();
+      if (search) p.set('search', search);
+      const model = document.getElementById('f-model').value;
+      if (model) p.set('model', model);
+      const host = document.getElementById('f-host').value;
+      if (host) p.set('host', host);
+      const from = document.getElementById('f-from').value;
+      if (from) p.set('date_from', from);
+      const to = document.getElementById('f-to').value;
+      if (to) p.set('date_to', to);
+      return p.toString();
+    }
+
+    function populateFilters(filters) {
+      const models = filters?.models || [];
+      const hosts = filters?.hosts || [];
+      const modelSel = document.getElementById('f-model');
+      const hostSel = document.getElementById('f-host');
+      const selModel = modelSel.value;
+      const selHost = hostSel.value;
+      modelSel.innerHTML = `<option value="">All models</option>` + models
+        .map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
+      hostSel.innerHTML = `<option value="">All hosts</option>` + hosts
+        .map((h) => `<option value="${esc(h)}">${esc(h)}</option>`).join('');
+      modelSel.value = selModel;
+      hostSel.value = selHost;
+    }
+
+    async function load() {
+      const el = document.getElementById('history');
+      const errEl = document.getElementById('error');
+      try {
+        const qs = currentQuery();
+        const res = await fetch(`/api/history${qs ? `?${qs}` : ''}`);
+        if (!res.ok) throw new Error('Failed to fetch history');
+        const data = await res.json();
+        const runs = data.runs || [];
+        populateFilters(data.filters);
+        el.innerHTML = runs.length
+          ? `<div style="color:#94a3b8; font-size:.875rem; margin-bottom:.5rem;">${runs.length} run${runs.length === 1 ? '' : 's'}</div>` + runsTable(runs)
+          : `<div style="background:#1e293b; padding:2rem; border-radius:.5rem; border:1px solid #334155; text-align:center;">
+               <p style="color:#94a3b8; margin-bottom:1rem;">No benchmarks match the current filters.</p>
+               <a href="/run" style="color:#3b82f6; text-decoration:none; font-weight:500;">Run your first benchmark →</a>
+             </div>`;
+      } catch (e) {
+        el.innerHTML = '';
+        errEl.style.display = 'block';
+        errEl.textContent = `Error: ${e.message}`;
+      }
+    }
+
+    const filterFields = ['f-search', 'f-model', 'f-host', 'f-from', 'f-to'];
+    filterFields.forEach((id) => {
+      document.getElementById(id).addEventListener('input', load);
+      document.getElementById(id).addEventListener('change', load);
+    });
+    document.getElementById('f-reset').addEventListener('click', () => {
+      filterFields.forEach((id) => { document.getElementById(id).value = ''; });
+      load();
+    });
+
+    document.getElementById('history').addEventListener('click', async (e) => {
+      const btn = e.target.closest('button[data-delete]');
+      if (!btn) return;
+      const runId = btn.dataset.delete;
+      if (!window.confirm(`Delete benchmark ${runId}? This cannot be undone.`)) return;
+      btn.disabled = true;
+      try {
+        const res = await fetch(`/api/benchmarks/${encodeURIComponent(runId)}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Failed to delete benchmark');
+        await load();
+      } catch (err) {
+        const errEl = document.getElementById('error');
+        errEl.style.display = 'block';
+        errEl.textContent = `Error: ${err.message}`;
+        btn.disabled = false;
+      }
+    });
+
+    load();
+  </script>
+</MainLayout>

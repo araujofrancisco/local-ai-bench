@@ -1,0 +1,95 @@
+# OllamaBench configuration.
+# The only required setting is how to connect to Ollama. If you omit `hosts`
+# entirely, the default local Ollama (http://127.0.0.1:11434) is used.
+#
+# Models are NOT listed here — they are auto-detected from each host by
+# `GET /api/tags`. Choose which ones to benchmark at run time, e.g.:
+#   ollama-bench run --models 'qwen*'
+#   ollama-bench run --models llama3.2:latest,qwen2.5-coder:14b
+#   ollama-bench run --exclude '*:0.8b'
+#   ollama-bench run --interactive
+#
+# With no --models/--exclude/--interactive flags, every autodetected model is
+# benchmarked. There is no "models" section in this file.
+
+app:
+  name: OllamaBench
+  output_dir: ./reports
+  log_level: info
+
+hosts:
+  # Lab server (Ollama 0.32.6). Add more hosts or move this to the one you use.
+  - name: lab-server
+    base_url: http://192.168.10.108:11434
+    timeout_seconds: 300
+
+plugins:
+  enabled:
+    # Implemented benchmark plugins:
+    - smoke
+    - reasoning
+    - translation
+    - summarization
+    - structured_output
+    - coding
+    - vision
+    - long_context
+  # Directory scanned for extra local plugins (.py files). Inside the Docker
+  # container this is the mounted host directory ./plugins -> /plugins.
+  local_dir: /plugins
+  options:
+    coding:
+      execute_code: false
+      timeout_seconds: 30
+    vision:
+      max_image_dimension: 768
+
+runner:
+  repetitions: 3
+  warmup_runs: 1
+  concurrency: 1
+  temperature: 0.0
+  seed: 42
+  max_retries: 2
+  retry_backoff_seconds: 2
+
+# Judge used for subjective scoring by plugins that support it.
+judge:
+  enabled: false
+  model: llama3.2:latest
+  temperature: 0.0
+
+context_optimization:
+  enabled: true
+  candidate_sizes:
+    - 512
+    - 1024
+    - 2048
+    - 4096
+    - 8192
+    - 16384
+  max_candidate_size: 32768
+  quality_threshold: 0.90
+  latency_budget_ms: null
+  needle_positions:
+    - 0.1
+    - 0.3
+    - 0.5
+    - 0.7
+    - 0.9
+
+reporting:
+  formats:
+    - json
+    - markdown
+    - html
+  include_raw_cases: true
+
+weights:
+  translation: 1.0
+  coding: 1.0
+  vision: 1.0
+  summarization: 1.0
+  reasoning: 1.0
+  structured_output: 1.0
+  long_context: 1.0

@@ -1,0 +1,44 @@
+# Git
+git
+.git
+.gitignore
+
+# Docker
+docker-compose*.yml
+Dockerfile*
+.dockerignore
+
+# Tests
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+.npm/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+dist/
+build/
+*.egg-info/

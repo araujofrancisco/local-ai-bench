@@ -1,0 +1,17 @@
+{
+  "name": "ollama-bench-web",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "test:pages": "node scripts/test-pages.mjs"
+  },
+  "dependencies": {
+    "astro": "^4.0.0"
+  },
+  "devDependencies": {
+    "jsdom": "^24.0.0"
+  }
+}

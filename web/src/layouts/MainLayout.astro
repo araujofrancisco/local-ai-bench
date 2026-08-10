@@ -1,0 +1,38 @@
+---
+interface Props {
+  title?: string;
+}
+
+const { title = 'OllamaBench' } = Astro.props;
+---
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{title} - OllamaBench</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body { font-family: system-ui, -apple-system, sans-serif; background: #0f172a; color: #e2e8f0; }
+      nav { background: #1e293b; padding: 1rem 2rem; border-bottom: 1px solid #334155; }
+      nav a { color: #94a3b8; text-decoration: none; margin-right: 1.5rem; font-weight: 500; }
+      nav a:hover, nav a.active { color: #f1f5f9; }
+      main { max-width: 1400px; margin: 0 auto; padding: 2rem; }
+      h1 { font-size: 2rem; margin-bottom: 1rem; color: #f1f5f9; }
+      h2 { font-size: 1.5rem; margin: 2rem 0 1rem; color: #e2e8f0; }
+    </style>
+  </head>
+  <body>
+    <nav>
+      <a href="/" class:list={[Astro.url.pathname === '/' && 'active']}>Dashboard</a>
+      <a href="/run" class:list={[Astro.url.pathname.startsWith('/run') && 'active']}>Run Benchmark</a>
+      <a href="/compare" class:list={[Astro.url.pathname.startsWith('/compare') && 'active']}>Compare</a>
+      <a href="/history" class:list={[Astro.url.pathname.startsWith('/history') && 'active']}>History</a>
+      <a href="/plugins" class:list={[Astro.url.pathname.startsWith('/plugins') && 'active']}>Plugins</a>
+    </nav>
+    <main>
+      <slot />
+    </main>
+  </body>
+</html>

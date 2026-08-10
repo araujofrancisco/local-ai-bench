@@ -1,0 +1,102 @@
+---
+import MainLayout from '../layouts/MainLayout.astro';
+---
+<MainLayout title="Dashboard">
+  <h1>Dashboard</h1>
+
+  <div id="error" style="display: none; background: #ef4444; color: white; padding: 1rem; border-radius: 0.5rem; margin-bottom: 2rem;"></div>
+
+  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1.5rem; margin-bottom: 3rem;">
+    <div style="background: #1e293b; padding: 1.5rem; border-radius: 0.5rem; border: 1px solid #334155;">
+      <div style="color: #94a3b8; font-size: 0.875rem; margin-bottom: 0.5rem;">Total Models</div>
+      <div id="stat-models" style="font-size: 2rem; font-weight: bold; color: #f1f5f9;">…</div>
+    </div>
+    <div style="background: #1e293b; padding: 1.5rem; border-radius: 0.5rem; border: 1px solid #334155;">
+      <div style="color: #94a3b8; font-size: 0.875rem; margin-bottom: 0.5rem;">Total Benchmarks</div>
+      <div id="stat-runs" style="font-size: 2rem; font-weight: bold; color: #f1f5f9;">…</div>
+    </div>
+    <div style="background: #1e293b; padding: 1.5rem; border-radius: 0.5rem; border: 1px solid #334155;">
+      <div style="color: #94a3b8; font-size: 0.875rem; margin-bottom: 0.5rem;">Last Run</div>
+      <div id="stat-last" style="font-size: 1.25rem; font-weight: bold; color: #f1f5f9;">…</div>
+    </div>
+  </div>
+
+  <h2>Available Models</h2>
+  <div id="models" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem;"></div>
+
+  <h2>Recent Benchmarks</h2>
+  <div id="runs"></div>
+
+  <script>
+    const esc = (s) =>
+      String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+    const modelCard = (m) => `
+      <div style="background:#1e293b; padding:1.5rem; border-radius:.5rem; border:1px solid #334155;">
+        <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:.75rem;">
+          <h3 style="color:#f1f5f9; font-size:1.125rem; font-weight:600;">${esc(m.name)}</h3>
+          <div style="display:flex; gap:.5rem;">
+            ${m.supports_vision ? '<span style="background:#7c3aed; color:white; padding:.25rem .5rem; border-radius:.25rem; font-size:.75rem;">Vision</span>' : ''}
+            ${m.supports_tools ? '<span style="background:#059669; color:white; padding:.25rem .5rem; border-radius:.25rem; font-size:.75rem;">Tools</span>' : ''}
+          </div>
+        </div>
+        <div style="color:#94a3b8; font-size:.875rem; margin-bottom:.5rem;">${esc(m.host)}</div>
+        ${m.max_context ? `<div style="color:#64748b; font-size:.75rem;">Context: ${Number(m.max_context).toLocaleString()} tokens</div>` : ''}
+      </div>`;
+
+    const runsTable = (runs) => `
+      <div style="background:#1e293b; border-radius:.5rem; border:1px solid #334155; overflow:hidden;">
+        <table style="width:100%; border-collapse:collapse;">
+          <thead>
+            <tr style="border-bottom:1px solid #334155; background:rgba(255,255,255,0.02);">
+              <th style="text-align:left; padding:1rem; color:#94a3b8; font-weight:500;">Run ID</th>
+              <th style="text-align:left; padding:1rem; color:#94a3b8; font-weight:500;">Timestamp</th>
+              <th style="text-align:left; padding:1rem; color:#94a3b8; font-weight:500;">Models</th>
+              <th style="text-align:right; padding:1rem; color:#94a3b8; font-weight:500;">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${runs.map((run, i) => `
+              <tr style="border-bottom:1px solid #334155; background:${i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)'};">
+                <td style="padding:1rem; font-family:monospace; font-size:.875rem;">${esc(run.run_id)}</td>
+                <td style="padding:1rem;">${new Date(run.timestamp).toLocaleString()}</td>
+                <td style="padding:1rem;">${esc(run.model_names ? run.model_names.join(', ') : '-')}</td>
+                <td style="text-align:right; padding:1rem;">
+                  <a href="/compare?run=${esc(run.run_id)}" style="color:#3b82f6; text-decoration:none; font-weight:500;">View</a>
+                </td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+
+    async function load() {
+      const errEl = document.getElementById('error');
+      try {
+        const [modelsRes, runsRes] = await Promise.all([
+          fetch('/api/models'),
+          fetch('/api/benchmarks'),
+        ]);
+        if (!modelsRes.ok || !runsRes.ok) throw new Error('Failed to fetch data');
+        const models = (await modelsRes.json()).models || [];
+        const runs = ((await runsRes.json()).runs || []).slice(0, 5);
+
+        document.getElementById('stat-models').textContent = models.length;
+        document.getElementById('stat-runs').textContent = runs.length;
+        document.getElementById('stat-last').textContent = runs[0]
+          ? new Date(runs[0].timestamp).toLocaleDateString()
+          : 'Never';
+
+        const modelsEl = document.getElementById('models');
+        modelsEl.innerHTML = models.length
+          ? models.map(modelCard).join('')
+          : '<p style="color:#94a3b8;">No models found. Make sure Ollama is running.</p>';
+
+        document.getElementById('runs').innerHTML = runs.length ? runsTable(runs) : '';
+      } catch (e) {
+        errEl.style.display = 'block';
+        errEl.textContent = `Error: ${e.message}`;
+      }
+    }
+    load();
+  </script>
+</MainLayout>

@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+
+# Tool caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Benchmark artifacts
+reports/
+*.jsonl
+!datasets/**/*.json
+data/*.db
+
+# Generated knowledge-graph output
+graphify-out/
+
+# Local plugin scratch
+plugins/__pycache__/
+
+# Web build artifacts
+web/node_modules/
+web/dist/
+web/.astro/
+data/*.db
