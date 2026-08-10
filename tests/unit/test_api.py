@@ -390,3 +390,22 @@ def test_api_active_runs_endpoint() -> None:
     finally:
         run_manager.remove("act1")
         run_manager.remove("act2")
+
+
+def test_api_get_plugin_returns_source() -> None:
+    with TestClient(app) as client:
+        resp = client.get("/api/plugins/smoke")
+        assert resp.status_code == 200
+        body = resp.json()
+        plugin = body["plugin"]
+        assert plugin["id"] == "smoke"
+        assert plugin["name"]
+        assert plugin["source_file"]  # e.g. ollama_bench/plugins/builtin/smoke.py
+        assert "source" in plugin and plugin["source"]
+        import base64
+
+        src = base64.b64decode(plugin["source"]).decode("utf-8")
+        assert "class SmokePlugin" in src
+
+        missing = client.get("/api/plugins/nope")
+        assert missing.status_code == 404

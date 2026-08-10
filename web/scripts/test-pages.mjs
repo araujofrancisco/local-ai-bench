@@ -182,6 +182,7 @@ assert('index: active run track link', d1.getElementById('active-runs').textCont
 assert('plugins: cards rendered', d2.getElementById('plugins').textContent.includes('Keyword presence'));
 assert('plugins: description shown', d2.getElementById('plugins').textContent.includes('Fast sanity check'));
 assert('plugins: options editor present', d2.querySelector('#plugins form[data-plugin]') !== null);
+assert('plugins: code buttons present', d2.querySelectorAll('button[data-source]').length >= 2);
 
 assert('history: table with run', d3.getElementById('history').textContent.includes('r1'));
 assert('history: delete button present', d3.querySelector('button[data-delete]') !== null);

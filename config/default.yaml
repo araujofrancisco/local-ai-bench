@@ -34,6 +34,7 @@ plugins:
     - coding
     - vision
     - long_context
+    - multi_context
   # Directory scanned for extra local plugins (.py files). Inside the Docker
   # container this is the mounted host directory ./plugins -> /plugins.
   local_dir: /plugins
@@ -43,6 +44,11 @@ plugins:
       timeout_seconds: 30
     vision:
       max_image_dimension: 768
+    multi_context:
+      prompt: "What is the capital of France?"
+      expected: "paris"
+      context_sizes: [512, 1024, 4096, 8192, 16384]
+      contains: true
 
 runner:
   repetitions: 3

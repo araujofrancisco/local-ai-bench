@@ -21,6 +21,7 @@ class PluginOptions(BaseModel):
     translation: dict[str, Any] = Field(default_factory=dict)
     coding: dict[str, Any] = Field(default_factory=dict)
     vision: dict[str, Any] = Field(default_factory=dict)
+    multi_context: dict[str, Any] = Field(default_factory=dict)
 
 
 class PluginConfig(BaseModel):
@@ -67,6 +68,7 @@ class WeightsConfig(BaseModel):
     reasoning: float = 1.0
     structured_output: float = 1.0
     long_context: float = 1.0
+    multi_context: float = 1.0
 
 
 class AppConfig(BaseModel):
@@ -138,6 +140,7 @@ hosts:
 plugins:
   enabled:
     - smoke
+    - multi_context
   # Directory scanned for extra local plugins (.py files, one plugin class each).
   local_dir: ./plugins
 

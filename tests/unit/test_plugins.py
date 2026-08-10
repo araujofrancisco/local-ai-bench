@@ -159,3 +159,86 @@ def test_coding_has_description() -> None:
 
     assert CodingPlugin.description
     assert "description" in CodingPlugin.__dict__
+
+
+# --- Multi-context plugin ---
+
+
+def _multi_ctx(sizes=None, max_ctx=None, expected="paris", prompt="What is the capital of France?"):
+    from ollama_bench.plugins.builtin.multi_context import MultiContextPlugin
+
+    plugin = MultiContextPlugin()
+    opts: dict = {"expected": expected, "prompt": prompt, "contains": True}
+    if sizes is not None:
+        opts["context_sizes"] = sizes
+    if max_ctx is not None:
+        opts["max_context_tokens"] = max_ctx
+    return plugin, RunContext(opts)
+
+
+def test_multicontext_cases_cover_each_size_and_double_num_ctx() -> None:
+    from ollama_bench.domain.models import ModelInfo
+
+    plugin, ctx = _multi_ctx(sizes=[512, 1024, 4096])
+    model = ModelInfo(host_name="h", model_name="m", max_context_tokens=None)
+    cases = list(plugin.cases(ctx))
+    assert [c.input["target_context"] for c in cases] == [512, 1024, 4096]
+    assert all(c.id.startswith("multictx_ctx_") for c in cases)
+    # num_ctx is double the target context (prompt+completion window convention).
+    assert plugin.build_request(cases[0], model, ctx)["options"]["num_ctx"] == 1024
+
+
+def test_multicontext_prunes_sizes_above_model_window() -> None:
+    plugin, ctx = _multi_ctx(sizes=[512, 1024, 4096, 16384], max_ctx=5000)
+    cases = list(plugin.cases(ctx))
+    assert [c.input["target_context"] for c in cases] == [512, 1024, 4096]
+
+
+async def test_multicontext_evaluate_contains_mode() -> None:
+    plugin, ctx = _multi_ctx(sizes=[512], expected="paris")
+    case = _first_case(plugin, ctx)
+    good = _resp("The capital of France is Paris.")
+    bad = _resp("The capital of France is Lyon.")
+    assert (await plugin.evaluate(case, good, ctx)).score == 1.0
+    assert (await plugin.evaluate(case, bad, ctx)).score == 0.0
+
+
+async def test_multicontext_evaluate_numeric_mode() -> None:
+    plugin, ctx = _multi_ctx(sizes=[512], expected="42", prompt="pick a number")
+    ctx.options["contains"] = False
+    case = _first_case(plugin, ctx)
+    ev = await plugin.evaluate(case, _resp("The number is 42, clearly."), ctx)
+    assert ev.score == 1.0
+
+
+def test_multicontext_aggregate_reports_per_context_score() -> None:
+    from ollama_bench.domain.models import (
+        BenchmarkCase,
+        CaseResult,
+        Evaluation,
+        ModelInfo,
+        ModelResponse,
+        TimingMetrics,
+        TokenMetrics,
+    )
+
+    plugin, _ctx = _multi_ctx(sizes=[512, 1024])
+    model = ModelInfo(host_name="h", model_name="m", max_context_tokens=None)
+    results = [
+        CaseResult(
+            case=BenchmarkCase(id="a", plugin_id="multi_context", dataset_version="v1", input={"target_context": 512}),
+            model=model,
+            response=ModelResponse(raw={}, text="paris", timing=TimingMetrics(total_ms=1.0), tokens=TokenMetrics()),
+            evaluation=Evaluation(score=1.0, passed=True),
+            attempt=1,
+        ),
+        CaseResult(
+            case=BenchmarkCase(id="b", plugin_id="multi_context", dataset_version="v1", input={"target_context": 1024}),
+            model=model,
+            response=ModelResponse(raw={}, text="nope", timing=TimingMetrics(total_ms=1.0), tokens=TokenMetrics()),
+            evaluation=Evaluation(score=0.0, passed=False),
+            attempt=1,
+        ),
+    ]
+    out = plugin.aggregate(results)
+    assert out.metrics["per_context_score"] == {512: 1.0, 1024: 0.0}

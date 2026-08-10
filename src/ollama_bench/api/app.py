@@ -8,8 +8,11 @@ frontend is served as static files from ``STATIC_DIR`` when present.
 from __future__ import annotations
 
 import asyncio
+import base64
 import datetime
+import inspect
 import os
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -299,28 +302,75 @@ def _effective_plugin_options(cfg: BenchmarkConfig) -> dict[str, dict[str, Any]]
     return merged
 
 
+def _src_root() -> Path:
+    """Repository `src` directory, used to express plugin files as a relative path."""
+    pkg = sys.modules.get("ollama_bench")
+    file = getattr(pkg, "__file__", None) if pkg is not None else None
+    if file:
+        return Path(file).resolve().parent.parent
+    return Path("src").resolve()
+
+
+def _plugin_source_path(cls: type) -> tuple[str | None, Path | None]:
+    """Return ``(relative_path, absolute_path)`` to a plugin's source file.
+
+    Resolves the file from the class via :func:`inspect.getfile`, so it works
+    for built-in plugins (the source module) and for local plugins loaded from
+    disk with ``importlib``. Returns ``(None, None)`` when no source file can be
+    resolved.
+    """
+    try:
+        module_file = inspect.getfile(cls)
+    except TypeError:
+        return None, None
+    abs_path = Path(module_file).resolve()
+    try:
+        rel = abs_path.relative_to(_src_root()).as_posix()
+    except ValueError:
+        rel = abs_path.as_posix()
+    return rel, abs_path
+
+
+def _plugin_record(pid: str, cls: type, effective: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": pid,
+        "name": getattr(cls, "name", pid),
+        "description": getattr(cls, "description", ""),
+        "category": getattr(cls, "category", "unknown"),
+        "version": getattr(cls, "version", "0.0.0"),
+        "dataset_version": getattr(cls, "dataset_version", ""),
+        "modalities": sorted(m.value for m in getattr(cls, "modalities", set())),
+        "options": effective.get(pid, {}),
+    }
+
+
 @app.get("/api/plugins")
 async def list_plugins() -> dict[str, Any]:
     cfg = _load_cfg()
     reg = registry()
     effective = _effective_plugin_options(cfg)
-    plugins = []
-    for pid in reg.ids():
-        cls = reg.get(pid)
-        if cls:
-            plugins.append(
-                {
-                    "id": pid,
-                    "name": getattr(cls, "name", pid),
-                    "description": getattr(cls, "description", ""),
-                    "category": getattr(cls, "category", "unknown"),
-                    "version": getattr(cls, "version", "0.0.0"),
-                    "dataset_version": getattr(cls, "dataset_version", ""),
-                    "modalities": sorted(m.value for m in getattr(cls, "modalities", set())),
-                    "options": effective.get(pid, {}),
-                }
-            )
+    plugins = [_plugin_record(pid, cls, effective) for pid in reg.ids() if (cls := reg.get(pid))]
     return {"plugins": plugins}
+
+
+@app.get("/api/plugins/{plugin_id}")
+async def get_plugin(plugin_id: str) -> dict[str, Any]:
+    """Plugin details incl. its source file (base64) for inspection/download."""
+    cfg = _load_cfg()
+    reg = registry()
+    cls = reg.get(plugin_id)
+    if cls is None:
+        raise HTTPException(status_code=404, detail=f"Plugin not found: {plugin_id}")
+    record = _plugin_record(plugin_id, cls, _effective_plugin_options(cfg))
+    rel, abs_path = _plugin_source_path(cls)
+    if abs_path is not None and abs_path.is_file():
+        raw = abs_path.read_bytes()
+        record["source_file"] = rel or abs_path.name
+        record["source"] = base64.b64encode(raw).decode("ascii")
+    else:
+        record["source_file"] = rel
+        record["source"] = None
+    return {"plugin": record}
 
 
 class PluginOptionsRequest(BaseModel):

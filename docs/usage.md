@@ -164,6 +164,8 @@ Each plugin card shows:
 
 - Name, category, version, dataset version, and modality chips
 - Description (built-ins include one)
+- A **Code** button that views the plugin's source file in a modal
+  (with a `.py` download link)
 - An **Options** editor (expandable) where you can change the plugin's
   configurable settings and press **Save**.
 
@@ -231,6 +233,7 @@ Base URL: `http://<host>:8000`. Interactive OpenAPI docs at `/docs`.
 | --- | --- | --- |
 | GET | `/api/models` | Discovered models |
 | GET | `/api/plugins` | Plugins with description, dataset version, modalities, effective options |
+| GET | `/api/plugins/{id}` | Plugin detail incl. `source_file` and base64-encoded `source` |
 | PUT | `/api/plugins/{id}/options` | Persist option overrides for a plugin |
 | POST | `/api/benchmarks/run` | Start a benchmark run (runs in the background) |
 | GET | `/api/benchmarks` | List persisted runs (`search`, `model`, `host`, `date_from`, `date_to`) |

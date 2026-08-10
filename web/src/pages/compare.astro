@@ -18,6 +18,22 @@ import MainLayout from '../layouts/MainLayout.astro';
     const scoreColor = (s) =>
       s === null || s === undefined ? 'inherit' : s >= 0.8 ? '#10b981' : s >= 0.5 ? '#f59e0b' : '#ef4444';
 
+    const HINTS = {
+      'p50 (ms)': 'Median generation latency — half of generations finish faster, half slower.',
+      'p95 (ms)': 'Tail latency: 95% of generations finish within this time. Sensitive to slow decodes/outliers.',
+      'TTFT p50': 'Median time to first token — measures prompt processing + first-token latency (server load, context length).',
+      'Tokens/s': 'Output tokens generated per second (throughput).',
+      'Score': 'Weighted mean of plugin scores (higher is better).',
+    };
+
+    // Render a header cell with an inline '?' tooltip hint.
+    const th = (label, align = 'right') => {
+      const hint = HINTS[label];
+      return `<th title="${hint}" style="text-align:${align}; padding:1rem; color:#94a3b8; font-weight:500;">
+        ${label}${hint ? `<span aria-label="${hint}" style="display:inline-flex;align-items:center;justify-content:center;width:1.1rem;height:1.1rem;border-radius:50%;color:#64748b;font-size:.7rem;border:1px solid #444;margin-left:.25rem;cursor:help;">?</span>` : ''}
+      </th>`;
+    };
+
     const compareTable = (rows, runId) => {
       const header = runId ? `
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; background:#1e293b; padding:.75rem 1rem; border-radius:.5rem; border:1px solid #334155;">
@@ -29,14 +45,14 @@ import MainLayout from '../layouts/MainLayout.astro';
         <table style="width:100%; border-collapse:collapse;">
           <thead>
             <tr style="border-bottom:1px solid #334155;">
-              <th style="text-align:left; padding:1rem; color:#94a3b8; font-weight:500;">Model</th>
-              <th style="text-align:right; padding:1rem; color:#94a3b8; font-weight:500;">Score</th>
-              <th style="text-align:right; padding:1rem; color:#94a3b8; font-weight:500;">p50 (ms)</th>
-              <th style="text-align:right; padding:1rem; color:#94a3b8; font-weight:500;">p95 (ms)</th>
-              <th style="text-align:right; padding:1rem; color:#94a3b8; font-weight:500;">TTFT p50</th>
-              <th style="text-align:right; padding:1rem; color:#94a3b8; font-weight:500;">Tokens/s</th>
-              <th style="text-align:right; padding:1rem; color:#94a3b8; font-weight:500;">Cases</th>
-              <th style="text-align:right; padding:1rem; color:#94a3b8; font-weight:500;">Errors</th>
+              ${th('Model', 'left')}
+              ${th('Score')}
+              ${th('p50 (ms)')}
+              ${th('p95 (ms)')}
+              ${th('TTFT p50')}
+              ${th('Tokens/s')}
+              ${th('Cases')}
+              ${th('Errors')}
             </tr>
           </thead>
           <tbody>
@@ -53,6 +69,11 @@ import MainLayout from '../layouts/MainLayout.astro';
               </tr>`).join('')}
           </tbody>
         </table>
+      </div>
+      <div style="margin-top:1rem; display:flex; flex-wrap:wrap; gap:1.5rem; font-size:.8rem; color:#64748b;">
+        <span><strong>p50/p95 (ms)</strong>: median / 95th-percentile generation latency across cases.</span>
+        <span><strong>TTFT p50</strong>: median time to first token (prompt processing + first-token latency).</span>
+        <span><strong>Tokens/s</strong>: output tokens per second (throughput).</span>
       </div>
       <div style="margin-top:2rem; display:flex; gap:1rem;">
         <a href="/run" style="background:#3b82f6; color:white; padding:.75rem 2rem; border-radius:.375rem; text-decoration:none; font-weight:500;">Run More Benchmarks</a>

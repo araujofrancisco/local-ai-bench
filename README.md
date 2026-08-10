@@ -29,6 +29,9 @@ SQLite for comparison. It ships with both a terminal CLI and a web UI
   track a specific run from anywhere.
 - **Plugin options** — view plugin details and edit their options in the UI;
   settings persist in SQLite and are merged over config defaults at run time.
+- **View plugin source** — each plugin card has a **Code** button that fetches the
+  plugin's source file and shows it in a modal, with a download link for the `.py`
+  (via `GET /api/plugins/{id}`).
 - **History filters + deletion** — filter runs by model, host, date range, and
   run-ID search; delete single runs or select multiple for **bulk delete**
   (active runs are protected with a 409). See running runs with status chips.

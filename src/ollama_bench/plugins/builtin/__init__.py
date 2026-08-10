@@ -9,6 +9,7 @@ def load_builtin_plugins(registry: PluginRegistry) -> None:
     """Register all built-in plugins that are currently implemented."""
     from ollama_bench.plugins.builtin.coding import CodingPlugin
     from ollama_bench.plugins.builtin.long_context import LongContextPlugin
+    from ollama_bench.plugins.builtin.multi_context import MultiContextPlugin
     from ollama_bench.plugins.builtin.reasoning import ReasoningPlugin
     from ollama_bench.plugins.builtin.smoke import SmokePlugin
     from ollama_bench.plugins.builtin.structured_output import StructuredOutputPlugin
@@ -25,6 +26,7 @@ def load_builtin_plugins(registry: PluginRegistry) -> None:
         CodingPlugin,
         VisionPlugin,
         LongContextPlugin,
+        MultiContextPlugin,
     ):
         with contextlib.suppress(ValueError):
             registry.register(cls)
