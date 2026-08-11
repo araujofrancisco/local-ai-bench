@@ -7,16 +7,24 @@ import MainLayout from '../layouts/MainLayout.astro';
   <div id="error" style="display: none; background: #ef4444; color: white; padding: 1rem; border-radius: 0.5rem; margin-bottom: 2rem;"></div>
 
   <!-- Column customization panel -->
-  <div id="column-panel">
+  <div id="column-panel" style="position:relative;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:.5rem;">
       <div style="display:flex; align-items:center; gap:.5rem;">
         <span style="color:#e2e8f0; font-size:.9rem; font-weight:500;">Columns</span>
-        <button id="toggle-columns" type="button" style="background:#0f172a; color:#94a3b8; border:1px solid #334155; border-radius:.25rem; padding:.15rem .5rem; cursor:pointer; font-size:.75rem;">▾</button>
+        <button id="toggle-columns" type="button" aria-expanded="false" style="background:#0f172a; color:#94a3b8; border:1px solid #334155; border-radius:.25rem; padding:.15rem .5rem; cursor:pointer; font-size:.75rem;">▾</button>
         <button id="reset-columns" type="button" style="background:transparent; color:#94a3b8; border:1px solid #334155; border-radius:.25rem; padding:.15rem .5rem; cursor:pointer; font-size:.75rem;">Reset</button>
         <button id="toggle-weights" type="button" style="background:#0f172a; color:#e2e8f0; border:1px solid #334155; border-radius:.25rem; padding:.15rem .5rem; cursor:pointer; font-size:.75rem;">⚖ Weights</button>
       </div>
     </div>
-    <div id="column-list-inner" style="display:none; flex-wrap:wrap; gap:.5rem;"></div>
+    <div id="columns-popover" style="display:none; position:absolute; top:100%; right:0; z-index:50; width:440px; max-width:90vw; max-height:60vh; overflow-y:auto; background:#1e293b; border:1px solid #334155; border-radius:.5rem; padding:1rem; box-shadow:0 10px 30px rgba(0,0,0,.5);">
+      <div style="display:flex; align-items:center; gap:.5rem; margin-bottom:.75rem;">
+        <input id="column-search" type="text" placeholder="Filter columns…" style="flex:1; background:#0f172a; color:#e2e8f0; border:1px solid #334155; border-radius:.25rem; padding:.35rem .6rem; font-size:.8rem;">
+        <button id="cols-all" type="button" data-cols-action="all" style="background:transparent; color:#3b82f6; border:1px solid #334155; border-radius:.25rem; padding:.25rem .6rem; cursor:pointer; font-size:.75rem;">All</button>
+        <button id="cols-none" type="button" data-cols-action="none" style="background:transparent; color:#94a3b8; border:1px solid #334155; border-radius:.25rem; padding:.25rem .6rem; cursor:pointer; font-size:.75rem;">Clear</button>
+      </div>
+      <div id="column-count" style="margin-bottom:.5rem; color:#94a3b8; font-size:.75rem;"></div>
+      <div id="column-groups"></div>
+    </div>
   </div>
 
   <!-- Category weights panel -->
@@ -51,8 +59,25 @@ import MainLayout from '../layouts/MainLayout.astro';
       'Errors': 'Number of failed cases for this model.',
     };
 
+    const fmtTokens = (n) => {
+      n = Number(n);
+      if (!n && n !== 0) return null;
+      if (n >= 1000) return (n / 1000).toFixed(n % 1000 ? 1 : 0).replace(/\.0$/, '') + 'K';
+      return String(n);
+    };
+
+    const pluginContextSizes = (row, pluginId) => {
+      const p = (row.plugins || []).find((x) => x.plugin_id === pluginId);
+      if (!p || !p.metrics) return null;
+      try {
+        const keys = Object.keys(JSON.parse(p.metrics).per_context_score || {});
+        if (keys.length) return keys.map(fmtTokens).join('/');
+      } catch { /* ignore */ }
+      return null;
+    };
+
     // Column registry: key -> {label, hint, group, type, align, extract, format?, color?, defaultVisible}
-    function buildColumns(plugins, compareDefaultIds) {
+    function buildColumns(plugins, compareDefaultIds, isMultiRun = false) {
       // Fallback: if compare_default is empty, use plugins that have weights defined
       // (these are the "core" plugins that contribute to the overall score)
       const WEIGHTED_PLUGINS = new Set([
@@ -66,31 +91,32 @@ import MainLayout from '../layouts/MainLayout.astro';
         model: { label: 'Model', hint: HINTS.Model, group: 'General', type: 'text', align: 'left',
           extract: (r) => r.model_name, defaultVisible: true },
         run: { label: 'Run', hint: HINTS.Run, group: 'General', type: 'text', align: 'left',
-          extract: (r) => r.run_id, defaultVisible: false },
+          extract: (r) => r.run_id, defaultVisible: isMultiRun },
         score: { label: 'Score', hint: HINTS.Score, group: 'General', type: 'number', align: 'right',
           extract: (r) => r.overall_score, format: (v) => formatNum(v, 3), color: (v) => scoreColor(v), defaultVisible: true },
         weighted: { label: 'Weighted', hint: 'Overall score recomputed live from per-plugin scores using the current category weights.', group: 'General', type: 'number', align: 'right',
           extract: (r) => weightedScore(r), format: (v) => formatNum(v, 3), color: (v) => scoreColor(v), defaultVisible: true },
         p50: { label: 'p50 (ms)', hint: HINTS['p50 (ms)'], group: 'Latency', type: 'number', align: 'right',
-          extract: (r) => r.latency_p50_ms, defaultVisible: true },
+          extract: (r) => r.latency_p50_ms, defaultVisible: false },
         p95: { label: 'p95 (ms)', hint: HINTS['p95 (ms)'], group: 'Latency', type: 'number', align: 'right',
-          extract: (r) => r.latency_p95_ms, defaultVisible: true },
+          extract: (r) => r.latency_p95_ms, defaultVisible: false },
         ttft: { label: 'TTFT p50', hint: HINTS['TTFT p50'], group: 'Latency', type: 'number', align: 'right',
-          extract: (r) => r.time_to_first_token_p50_ms, defaultVisible: true },
+          extract: (r) => r.time_to_first_token_p50_ms, defaultVisible: false },
         tps: { label: 'Tokens/s', hint: HINTS['Tokens/s'], group: 'Latency', type: 'number', align: 'right',
-          extract: (r) => r.tokens_per_second, defaultVisible: true },
+          extract: (r) => r.tokens_per_second, defaultVisible: false },
         cases: { label: 'Cases', hint: HINTS.Cases, group: 'General', type: 'number', align: 'right',
-          extract: (r) => r.cases_run, defaultVisible: true },
+          extract: (r) => r.cases_run, defaultVisible: false },
         errors: { label: 'Errors', hint: HINTS.Errors, group: 'General', type: 'number', align: 'right',
-          extract: (r) => r.errors, color: (v) => (v > 0 ? '#ef4444' : 'inherit'), defaultVisible: true },
+          extract: (r) => r.errors, color: (v) => (v > 0 ? '#ef4444' : 'inherit'), defaultVisible: false },
+        context: { label: 'Context', hint: 'Context window the model was benchmarked at. When unset, shows the context sizes exercised by the multi-context plugin.', group: 'General', type: 'text', align: 'right',
+          extract: (r) => r.max_context_tokens ? fmtTokens(r.max_context_tokens) : pluginContextSizes(r, 'multi_context'), defaultVisible: true },
       };
-      // Per-plugin columns: a score column per active plugin (default-on) plus
-      // optional per-plugin latency/ttft/tokens columns (opt-in). The set of
-      // default-on per-plugin ids comes from the server's `compare_default`
-      // config list (empty => all run plugins default-on).
+      // Per-plugin columns: a score column per active plugin (default-on,
+      // driven by the server's `compare_default` config list; empty => all run
+      // plugins default-on) plus an opt-in Tokens/s column. No per-plugin
+      // latency columns.
       const seen = new Set();
       const active = (plugins || []);
-      // Use fallback: if compare_default is empty, only show weighted plugins by default
       for (const p of active) {
         const id = p.plugin_id;
         if (seen.has(id)) continue;
@@ -101,18 +127,6 @@ import MainLayout from '../layouts/MainLayout.astro';
           extract: (r) => (r.plugins || []).find((x) => x.plugin_id === id)?.score ?? null,
           format: (v) => formatNum(v, 3), color: (v) => scoreColor(v),
           defaultVisible: useFallback ? WEIGHTED_PLUGINS.has(id) : compareDefault.has(id),
-        };
-        cols[`plugin:${id}:p50`] = {
-          label: `${id} p50 (ms)`, hint: `Plugin '${id}' median generation latency.`,
-          group: 'Per-plugin', type: 'number', align: 'right',
-          extract: (r) => (r.plugins || []).find((x) => x.plugin_id === id)?.latency_p50_ms ?? null,
-          defaultVisible: false,
-        };
-        cols[`plugin:${id}:ttft`] = {
-          label: `${id} TTFT`, hint: `Plugin '${id}' median time to first token.`,
-          group: 'Per-plugin', type: 'number', align: 'right',
-          extract: (r) => (r.plugins || []).find((x) => x.plugin_id === id)?.time_to_first_token_p50_ms ?? null,
-          defaultVisible: false,
         };
         cols[`plugin:${id}:tps`] = {
           label: `${id} Tokens/s`, hint: `Plugin '${id}' output tokens per second.`,
@@ -125,21 +139,23 @@ import MainLayout from '../layouts/MainLayout.astro';
     }
 
     // --- localStorage persistence helpers ---
+    const VISIBLE_KEY = 'compare.columns.visible.v3';
+    const ORDER_KEY = 'compare.columns.order.v3';
     const storage = {
-      order: (cols) => JSON.parse(localStorage.getItem('compare.columns.order') || 'null') || Object.keys(cols),
+      order: (cols) => JSON.parse(localStorage.getItem(ORDER_KEY) || 'null') || Object.keys(cols),
       orderOk: (cols) => {
-        const o = JSON.parse(localStorage.getItem('compare.columns.order') || 'null') || [];
+        const o = JSON.parse(localStorage.getItem(ORDER_KEY) || 'null') || [];
         const keys = o.filter((k) => cols[k]);
         for (const k of Object.keys(cols)) if (!keys.includes(k)) keys.push(k);
-        localStorage.setItem('compare.columns.order', JSON.stringify(keys));
+        localStorage.setItem(ORDER_KEY, JSON.stringify(keys));
         return keys;
       },
       visible: () => {
-        const raw = localStorage.getItem('compare.columns.visible');
+        const raw = localStorage.getItem(VISIBLE_KEY);
         if (!raw) return null; // null => all columns visible
         try { return new Set(JSON.parse(raw)); } catch { return null; }
       },
-      setVisible: (keys) => localStorage.setItem('compare.columns.visible', JSON.stringify([...keys])),
+      setVisible: (keys) => localStorage.setItem(VISIBLE_KEY, JSON.stringify([...keys])),
       sort: () => JSON.parse(localStorage.getItem('compare.sort') || 'null') || { key: 'score', dir: 'desc' },
       setSort: (key, dir) => localStorage.setItem('compare.sort', JSON.stringify({ key, dir })),
     };
@@ -343,10 +359,15 @@ import MainLayout from '../layouts/MainLayout.astro';
         defaultWeights = weightsData.defaults || {};
         currentWeights = weightsData.effective || {};
         for (const p of (pluginIndex.plugins || [])) categoryOf[p.id] = p.category;
-        currentCols = buildColumns(plugins, compareDefault);
+        // Per-plugin columns come from the plugin registry (always available),
+        // plus any plugin found in run data that is no longer in the registry.
+        const pluginList = [...(pluginIndex.plugins || []).map((p) => ({ plugin_id: p.id }))];
+        const knownIds = new Set(pluginList.map((p) => p.plugin_id));
+        for (const p of plugins) if (!knownIds.has(p.plugin_id)) pluginList.push(p);
+        currentCols = buildColumns(pluginList, compareDefault, runIds.length > 1);
         const keys = storage.orderOk(currentCols);
         // Seed localStorage with default visibility (only defaultVisible cols) on first visit.
-        if (!localStorage.getItem('compare.columns.visible')) {
+        if (!localStorage.getItem(VISIBLE_KEY)) {
           storage.setVisible(keys.filter((k) => currentCols[k].defaultVisible));
         }
         renderColumnToggles(currentCols, keys);
@@ -366,24 +387,70 @@ import MainLayout from '../layouts/MainLayout.astro';
       }
     }
 
+    const GROUP_ORDER = ['General', 'Latency', 'Per-plugin'];
+
     function renderColumnToggles(cols, order) {
-      const list = document.getElementById('column-list-inner');
-      if (!list) return;
-      list.innerHTML = '';
+      const groups = document.getElementById('column-groups');
+      if (!groups) return;
+      groups.innerHTML = '';
       const v = storage.visible();
       const allOn = v === null;
+      const byGroup = {};
       for (const k of order) {
         const c = cols[k];
-        const id = `col-${c.label.replace(/[.\s()]/g, '_').toLowerCase()}`;
-        const on = allOn || v.has(k);
-        const frag = document.createRange().createContextualFragment(
-          `<div style="display:flex; align-items:center; gap:.375rem;">
-            <input type="checkbox" id="${id}" data-col="${esc(k)}" ${on ? 'checked' : ''} style="accent-color:#3b82f6; margin:0;">
-            <label for="${id}" style="color:#cbd5e1; font-size:.85rem; cursor:pointer;">${esc(c.label)}</label>
-          </div>`
-        );
-        list.appendChild(frag);
+        (byGroup[c.group] = byGroup[c.group] || []).push([k, c]);
       }
+      const groupNames = GROUP_ORDER.filter((g) => byGroup[g]).concat(
+        Object.keys(byGroup).filter((g) => !GROUP_ORDER.includes(g))
+      );
+      for (const g of groupNames) {
+        const section = document.createElement('div');
+        section.dataset.groupSection = g;
+        section.style.marginBottom = '.75rem';
+        const header = document.createElement('div');
+        header.style.cssText = 'display:flex; align-items:center; justify-content:space-between; margin-bottom:.35rem;';
+        header.innerHTML =
+          `<span style="color:#e2e8f0; font-size:.72rem; font-weight:600; text-transform:uppercase; letter-spacing:.05em;">${esc(g)}</span>
+           <span style="display:flex; gap:.6rem;">
+             <a href="#" data-cols-group="${esc(g)}" data-group-action="all" style="color:#3b82f6; font-size:.75rem;">All</a>
+             <a href="#" data-cols-group="${esc(g)}" data-group-action="none" style="color:#94a3b8; font-size:.75rem;">None</a>
+           </span>`;
+        section.appendChild(header);
+        const list = document.createElement('div');
+        list.style.cssText = 'display:flex; flex-wrap:wrap; gap:.25rem .75rem;';
+        for (const [k, c] of byGroup[g]) {
+          const on = allOn || v.has(k);
+          const row = document.createElement('label');
+          row.style.cssText = 'display:flex; align-items:center; gap:.3rem; font-size:.8rem; color:#cbd5e1; cursor:pointer;';
+          row.innerHTML =
+            `<input type="checkbox" data-col="${esc(k)}" ${on ? 'checked' : ''} style="accent-color:#3b82f6; margin:0;">
+             <span>${esc(c.label)}</span>`;
+          list.appendChild(row);
+        }
+        section.appendChild(list);
+        groups.appendChild(section);
+      }
+      const count = document.getElementById('column-count');
+      if (count) {
+        const on = allOn ? order.length : order.filter((k) => v.has(k)).length;
+        count.textContent = `Showing ${on} of ${order.length} columns`;
+      }
+      applyColumnSearch();
+    }
+
+    function applyColumnSearch() {
+      const searchEl = document.getElementById('column-search');
+      if (!searchEl) return;
+      const q = searchEl.value.trim().toLowerCase();
+      document.querySelectorAll('#column-groups [data-group-section]').forEach((section) => {
+        let visible = 0;
+        section.querySelectorAll('label').forEach((row) => {
+          const match = !q || row.textContent.toLowerCase().includes(q);
+          row.style.display = match ? '' : 'none';
+          if (match) visible++;
+        });
+        section.style.display = visible ? '' : 'none';
+      });
     }
 
     const getRoot = () => document.getElementById('compare');
@@ -437,7 +504,35 @@ import MainLayout from '../layouts/MainLayout.astro';
         }
     });
 
+    const refreshToggles = () => renderColumnToggles(currentCols, storage.orderOk(currentCols));
+
     document.getElementById('column-panel')?.addEventListener('click', (e) => {
+      // Global All / Clear buttons.
+      const action = e.target.closest('[data-cols-action]');
+      if (action) {
+        e.preventDefault();
+        const set = action.dataset.colsAction === 'all'
+          ? new Set(Object.keys(currentCols))
+          : new Set();
+        storage.setVisible([...set]);
+        refreshToggles();
+        load();
+        return;
+      }
+      // Per-group All / None links.
+      const grp = e.target.closest('[data-cols-group]');
+      if (grp) {
+        e.preventDefault();
+        const g = grp.dataset.colsGroup;
+        const act = grp.dataset.groupAction;
+        const keys = Object.keys(currentCols).filter((k) => currentCols[k].group === g);
+        const set = storage.visible() ?? new Set(Object.keys(currentCols));
+        keys.forEach((k) => { if (act === 'all') set.add(k); else set.delete(k); });
+        storage.setVisible([...set]);
+        refreshToggles();
+        load();
+        return;
+      }
       const toggle = e.target.closest('input[type="checkbox"][data-col]');
       if (!toggle) return;
       const key = toggle.dataset.col;
@@ -449,9 +544,44 @@ import MainLayout from '../layouts/MainLayout.astro';
     });
 
     document.getElementById('reset-columns')?.addEventListener('click', () => {
-      localStorage.removeItem('compare.columns.visible');
-      localStorage.removeItem('compare.columns.order');
+      localStorage.removeItem(VISIBLE_KEY);
+      localStorage.removeItem(ORDER_KEY);
       load();
+    });
+
+    document.getElementById('toggle-columns')?.addEventListener('click', () => {
+      const popover = document.getElementById('columns-popover');
+      if (!popover) return;
+      const show = popover.style.display === 'none';
+      popover.style.display = show ? 'block' : 'none';
+      const btn = document.getElementById('toggle-columns');
+      if (btn) {
+        btn.textContent = show ? '▴' : '▾';
+        btn.setAttribute('aria-expanded', String(show));
+      }
+      if (show) refreshToggles();
+    });
+
+    document.getElementById('column-search')?.addEventListener('input', applyColumnSearch);
+
+    document.addEventListener('click', (e) => {
+      const popover = document.getElementById('columns-popover');
+      if (!popover || popover.style.display === 'none') return;
+      const panel = document.getElementById('column-panel');
+      if (panel && !panel.contains(e.target)) {
+        popover.style.display = 'none';
+        const btn = document.getElementById('toggle-columns');
+        if (btn) { btn.textContent = '▾'; btn.setAttribute('aria-expanded', 'false'); }
+      }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      const popover = document.getElementById('columns-popover');
+      if (!popover || popover.style.display === 'none') return;
+      popover.style.display = 'none';
+      const btn = document.getElementById('toggle-columns');
+      if (btn) { btn.textContent = '▾'; btn.setAttribute('aria-expanded', 'false'); }
     });
 
     // --- Weights panel ---

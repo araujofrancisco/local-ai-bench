@@ -393,19 +393,8 @@ class BenchmarkRepository:
         per-plugin score/latency stats.
         """
         rows = self._select_models(run_id=run_id, run_ids=run_ids)
-        multi = bool(run_ids)
-        if multi:
-            # run_created_at already selected by _select_models for the multi case.
-            pass
-        else:
-            run_ids_resolved = [run_id] if run_id else None
-            if run_ids_resolved is None:
-                # No scoping: attach empty plugins (no run context available).
-                for row in rows:
-                    row.setdefault("run_id", None)
-                    row["plugins"] = []
-                return rows
-        # Attach per-plugin aggregates (with latency) for each model/run.
+        # Attach per-plugin aggregates (with latency) for each model/run. Each
+        # row carries its run_id, so this works for scoped and unscoped views.
         for row in rows:
             row["plugins"] = self._plugin_aggregates(row["run_id"], row["model_name"])
         return rows
@@ -419,7 +408,9 @@ class BenchmarkRepository:
             select = (
                 "m.run_id AS run_id, r.timestamp AS run_created_at, "
                 "m.model_name, m.overall_score, m.latency_p50_ms, m.latency_p95_ms, "
-                "m.time_to_first_token_p50_ms, m.tokens_per_second, m.cases_run, m.errors"
+                "m.time_to_first_token_p50_ms, m.tokens_per_second, m.cases_run, m.errors, "
+                "m.max_context_tokens AS max_context_tokens, "
+                "m.context_recommendation AS context_recommendation"
             )
             from_clause = "FROM models m JOIN runs r ON r.run_id = m.run_id"
             params: list[Any] = list(run_ids)
@@ -428,7 +419,9 @@ class BenchmarkRepository:
             select = (
                 "m.run_id AS run_id, "
                 "m.model_name, m.overall_score, m.latency_p50_ms, m.latency_p95_ms, "
-                "m.time_to_first_token_p50_ms, m.tokens_per_second, m.cases_run, m.errors"
+                "m.time_to_first_token_p50_ms, m.tokens_per_second, m.cases_run, m.errors, "
+                "m.max_context_tokens AS max_context_tokens, "
+                "m.context_recommendation AS context_recommendation"
             )
             from_clause = "FROM models m"
             params = [run_id]
@@ -437,7 +430,9 @@ class BenchmarkRepository:
             select = (
                 "m.run_id AS run_id, "
                 "m.model_name, m.overall_score, m.latency_p50_ms, m.latency_p95_ms, "
-                "m.time_to_first_token_p50_ms, m.tokens_per_second, m.cases_run, m.errors"
+                "m.time_to_first_token_p50_ms, m.tokens_per_second, m.cases_run, m.errors, "
+                "m.max_context_tokens AS max_context_tokens, "
+                "m.context_recommendation AS context_recommendation"
             )
             from_clause = "FROM models m"
             params = []
@@ -452,7 +447,7 @@ class BenchmarkRepository:
     def _plugin_aggregates(self, run_id: str, model_name: str) -> list[dict[str, Any]]:
         cur = self._conn.execute(
             """
-            SELECT plugin_id, score, latency_p50_ms, time_to_first_token_p50_ms,
+            SELECT plugin_id, score, metrics, latency_p50_ms, time_to_first_token_p50_ms,
                    tokens_per_second, cases_run
             FROM plugins
             WHERE run_id = ? AND model_name = ?

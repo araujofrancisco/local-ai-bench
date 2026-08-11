@@ -281,6 +281,19 @@ def test_api_compare_multi_run_with_run_column() -> None:
             assert "latency_p50_ms" in m["plugins"][0]
 
 
+def test_api_compare_unscoped_includes_per_plugin_aggregates() -> None:
+    # Default compare view (no ?run=) must still surface per-plugin aggregates
+    # so weighted/per-plugin columns render. Regression test.
+    with TestClient(app) as client:
+        resp = client.get("/api/compare")
+        assert resp.status_code == 200
+        for m in resp.json()["models"]:
+            assert m["run_id"] is not None
+            assert m["plugins"], "unscoped compare rows must carry per-plugin data"
+            assert m["plugins"][0]["plugin_id"] == "smoke"
+            assert m["plugins"][0]["score"] is not None
+
+
 def test_api_benchmark_cases_endpoint() -> None:
     with TestClient(app) as client:
         resp = client.get("/api/benchmarks/run123/cases")

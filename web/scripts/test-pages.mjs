@@ -221,14 +221,16 @@ assert('history: compare selected button present', d3.querySelector('#bulk-compa
 assert('history: compare per-row link removed', d3.querySelector('a[href^="/compare?run="]') === null);
 assert('history: active run merged', d3.getElementById('history').textContent.includes('running1'));
 
-assert('compare: column panel present', d4.getElementById('column-list-inner') !== null);
+assert('compare: column panel present', d4.getElementById('columns-popover') !== null);
 assert('compare: model row', d4.getElementById('compare').textContent.includes('m1'));
 assert('compare: score shown', d4.getElementById('compare').textContent.includes('0.900'));
 assert('compare: tooltip glyph is i', d5.querySelector('th[title]') !== null && !d5.querySelector('th[title]').textContent.includes('?'));
 assert('compare?run=r1: delete run button present', d5.querySelector('button[data-delete-run]') !== null);
 assert('compare: column toggle checkboxes present', d5.querySelectorAll('input[data-col]').length >= 9);
+assert('compare: minimal defaults (4 core checked)', d5.querySelectorAll('input[data-col]:checked').length === 4);
+assert('compare: latency cols hidden by default', !d5.querySelector('input[data-col="p50"]').checked && !d5.querySelector('input[data-col="tps"]').checked);
 assert('compare: show-errors button present', d5.querySelector('button#show-errors') !== null);
-assert('compare?run=r1: per-plugin columns built', d5.getElementById('compare').textContent.includes('smoke score'));
+assert('compare: per-plugin columns built', d5.querySelector('input[data-col="plugin:smoke:score"]') !== null);
 
 assert('compare multi-run: both models', d6.getElementById('compare').textContent.includes('m1') && d6.getElementById('compare').textContent.includes('m2'));
 assert('compare multi-run: run column shown', d6.getElementById('compare').textContent.includes('r1') && d6.getElementById('compare').textContent.includes('r2'));
