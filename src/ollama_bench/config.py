@@ -42,6 +42,7 @@ class RunnerConfig(BaseModel):
     concurrency: int = 1
     temperature: float = 0.0
     seed: int = 42
+    # Number of retries AFTER the initial attempt (0 => exactly one request).
     max_retries: int = 2
     retry_backoff_seconds: float = 2.0
 

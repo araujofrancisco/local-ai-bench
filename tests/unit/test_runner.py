@@ -151,7 +151,8 @@ async def test_send_retries_exhausted_returns_error_response():
     resp = await _send_with_retries(client, _MODEL, _FakePlugin(), _CASE, {}, _runner())
     assert resp.error is not None
     assert resp.text == ""
-    assert client.calls == 3
+    # max_retries=3 => 1 initial attempt + 3 retries.
+    assert client.calls == 4
 
 
 async def test_send_does_not_retry_non_retryable_status():
@@ -162,11 +163,26 @@ async def test_send_does_not_retry_non_retryable_status():
     assert client.calls == 1
 
 
-async def test_send_does_not_retry_transport_error_when_max_retries_is_one():
+async def test_send_retries_once_when_max_retries_is_one():
     client = _FakeClient(fail_count=99)
     resp = await _send_with_retries(client, _MODEL, _FakePlugin(), _CASE, {}, _runner(max_retries=1))
     assert resp.error is not None
+    assert client.calls == 2
+
+
+async def test_send_still_attempts_once_when_max_retries_is_zero():
+    # max_retries=0 means "no retries", not "no request" — the initial attempt
+    # must still be sent (regression: the old range(1, max_retries+1) skipped it).
+    client = _FakeClient(fail_count=99)
+    resp = await _send_with_retries(client, _MODEL, _FakePlugin(), _CASE, {}, _runner(max_retries=0))
+    assert resp.error is not None
     assert client.calls == 1
+
+    ok = _FakeClient(fail_count=0)
+    good = await _send_with_retries(ok, _MODEL, _FakePlugin(), _CASE, {}, _runner(max_retries=0))
+    assert good.error is None
+    assert good.text == "ok"
+    assert ok.calls == 1
 
 
 # --- Weighted overall scoring ---

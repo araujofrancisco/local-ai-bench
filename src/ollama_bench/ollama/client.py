@@ -18,14 +18,21 @@ _DEFAULT_TIMEOUT = httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0
 
 
 class OllamaClient:
-    def __init__(self, base_url: str, timeout_seconds: int = 300) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        timeout_seconds: int = 300,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         timeout = (
             httpx.Timeout(timeout_seconds, connect=10.0)
             if timeout_seconds
             else _DEFAULT_TIMEOUT
         )
-        self._client = httpx.AsyncClient(base_url=self.base_url, timeout=timeout)
+        self._client = httpx.AsyncClient(
+            base_url=self.base_url, timeout=timeout, transport=transport
+        )
 
     async def aclose(self) -> None:
         await self._client.aclose()

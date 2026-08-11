@@ -60,6 +60,7 @@ class RunOrchestrator:
         model_filter: Callable[[ModelInfo], bool] | None = None,
         run_id: str | None = None,
         plugin_options: dict[str, dict[str, Any]] | None = None,
+        client_transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.config = config
         self.plugins = plugins or []
@@ -67,6 +68,7 @@ class RunOrchestrator:
         self.model_filter = model_filter
         self.run_id = run_id or _new_run_id()
         self.plugin_options = plugin_options
+        self._client_transport = client_transport
         self._events: list[Event] = []
 
     def emit(self, event: Event) -> None:
@@ -115,7 +117,9 @@ class RunOrchestrator:
         return result
 
     async def _run_host(self, host: HostConfig, result: RunResult) -> None:
-        client = OllamaClient(host.base_url, host.timeout_seconds)
+        client = OllamaClient(
+            host.base_url, host.timeout_seconds, transport=self._client_transport
+        )
         try:
             version = await client.health()
             self.emit(Event(Events.HOST_CHECKED, host=host.name, message="ok", data=version))
@@ -311,7 +315,9 @@ async def _send_with_retries(
     request = plugin.build_request(case, model, ctx)
     last_error: str | None = None
 
-    for attempt in range(1, runner.max_retries + 1):
+    # `max_retries` is the number of retries AFTER the initial attempt, so the
+    # loop always runs at least once (max_retries=0 still sends the request).
+    for attempt in range(runner.max_retries + 1):
         try:
             resp = await client.chat(
                 model.model_name,

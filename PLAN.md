@@ -1969,6 +1969,12 @@ Extras added beyond the v1 plan:
   omitted (falls back to local `127.0.0.1:11434` or `$OLLAMA_HOST`), `local_dir`
   is `./plugins` (Docker mounts it at `/app/plugins`), and `ollama-bench init`
   writes this working starter config.
+- E2E integration tests added (mock Ollama via `httpx.MockTransport`): a full
+  discovery → run → report → SQLite-persist path. This surfaced and fixed a
+  `max_retries=0` bug in `_send_with_retries` where the initial request was
+  never sent; `max_retries` now correctly means "retries after the first
+  attempt". `OllamaClient`/`RunOrchestrator` accept an optional `transport`
+  for testability.
 
 ---
 
