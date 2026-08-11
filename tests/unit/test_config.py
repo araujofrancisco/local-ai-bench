@@ -3,7 +3,13 @@
 import pytest
 from pydantic import ValidationError
 
-from ollama_bench.config import BenchmarkConfig, config_hash, load_config, write_default_config
+from ollama_bench.config import (
+    DEFAULT_CONFIG_TEXT,
+    BenchmarkConfig,
+    config_hash,
+    load_config,
+    write_default_config,
+)
 
 VALID_YAML = """\
 app:
@@ -64,6 +70,60 @@ def test_write_default_config(tmp_path):
     assert cfg.app.name == "OllamaBench"
 
 
+def test_default_config_falls_back_to_local_host(tmp_path):
+    p = tmp_path / "config.yaml"
+    write_default_config(p)
+    cfg = load_config(p)
+    assert len(cfg.hosts) == 1
+    assert cfg.hosts[0].name == "local"
+    assert cfg.hosts[0].base_url == "http://127.0.0.1:11434"
+
+
+def test_default_host_honors_ollama_host(monkeypatch):
+    monkeypatch.setenv("OLLAMA_HOST", "http://ollama.example:11435")
+    cfg = BenchmarkConfig()
+    assert cfg.hosts[0].base_url == "http://ollama.example:11435"
+
+
+def test_default_host_uses_local_when_no_env(monkeypatch):
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    cfg = BenchmarkConfig()
+    assert cfg.hosts[0].base_url == "http://127.0.0.1:11434"
+
+
 def test_missing_config_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         load_config(tmp_path / "nope.yaml")
+
+
+def test_compare_default_defaults_empty():
+    assert BenchmarkConfig().plugins.compare_default == []
+
+
+def test_compare_default_from_yaml(tmp_path):
+    p = tmp_path / "config.yaml"
+    p.write_text(VALID_YAML + "  compare_default: [translation, coding]\n")
+    cfg = load_config(p)
+    assert cfg.plugins.compare_default == ["translation", "coding"]
+
+
+def test_plugin_options_are_plain_dicts():
+    cfg = BenchmarkConfig()
+    assert isinstance(cfg.plugins.options, dict)
+    for inner in cfg.plugins.options.values():
+        assert isinstance(inner, dict)
+
+
+def test_default_config_matches_packaged(tmp_path):
+    target = tmp_path / "config.yaml"
+    write_default_config(target)
+    assert target.read_text(encoding="utf-8").rstrip("\n") == DEFAULT_CONFIG_TEXT.rstrip("\n")
+
+
+def test_packaged_default_config_falls_back(tmp_path, monkeypatch):
+    import ollama_bench.config as config_mod
+
+    monkeypatch.setattr(config_mod, "_packaged_default_config", lambda: None)
+    p = tmp_path / "config.yaml"
+    write_default_config(p)
+    assert p.read_text(encoding="utf-8").rstrip("\n") == DEFAULT_CONFIG_TEXT.rstrip("\n")

@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import json
 from pathlib import Path
+from typing import Any
 
 from ollama_bench.domain.models import RunResult
 
@@ -129,11 +130,39 @@ def _collect_plugin_ids(result: RunResult) -> list[str]:
     return seen
 
 
-def _ctx_cell(per: dict[int, float | None], size: int) -> str:
+def _sorted_context_items(per: dict[Any, Any]) -> list[tuple[int, Any]]:
+    """Normalise ``per_context_score`` keys to ints, sorted ascending.
+
+    Keys may be ints in memory or strings after a JSON round-trip; both are
+    coerced so report tables never mix ``str``/``int`` ordering.
+    """
+    out: list[tuple[int, Any]] = []
+    for k, v in per.items():
+        try:
+            out.append((int(k), v))
+        except (TypeError, ValueError):
+            continue
+    return sorted(out)
+
+
+def _context_sizes(result: RunResult) -> list[int]:
+    """Union of every context size probed by the long-context plugin."""
+    sizes: set[int] = set()
+    for m in result.models:
+        for p in m.plugins:
+            per = (p.metrics or {}).get("per_context_score", {})
+            sizes.update(size for size, _ in _sorted_context_items(per))
+    return sorted(sizes)
+
+
+def _ctx_cell(per: dict[Any, Any], size: int) -> str:
     sc = per.get(size)
     if sc is None:
+        sc = per.get(str(size))
+    if sc is None:
         return "-"
-    return f"{sc:.0f}" if sc >= 1 else f"{sc:.1f}"
+    value = float(sc)
+    return f"{value:.0f}" if value >= 1 else f"{value:.1f}"
 
 
 def _render_context_recommendation(result: RunResult) -> list[str]:
@@ -192,8 +221,8 @@ def _render_per_case_detail(result: RunResult) -> list[str]:
             label = _PID_LABELS.get(p.plugin_id, p.plugin_id)
             per_ctx = p.metrics.get("per_context_score", {}) if p.metrics else {}
             if per_ctx:
-                for ctx_size, sc in sorted(per_ctx.items()):
-                    ok = sc is not None and sc > 0
+                for ctx_size, sc in _sorted_context_items(per_ctx):
+                    ok = sc is not None and float(sc) > 0
                     lines.append(
                         f"| {label} | {m.model_name} | ctx={ctx_size} | "
                         f"{'✅' if ok else '❌'} | {_fmt(sc, 2)} |"
@@ -218,20 +247,19 @@ def _render_context_window(result: RunResult) -> list[str]:
     ]
     if not lc:
         return lines
+    sizes = _context_sizes(result)
     lines.append("## Context-window performance")
     lines.append("")
     lines.append("Accuracy (1.0 = correct, 0 = wrong) by context size:")
     lines.append("")
-    lines.append("| Model | Max ctx (tokens) | Ctx 256 | Ctx 1024 | Ctx 4096 | Ctx 16k |")
-    lines.append("|---|---|---|---|---|---|")
+    header = "| Model | Max ctx (tokens) | " + " | ".join(f"Ctx {size}" for size in sizes) + " |"
+    lines.append(header)
+    lines.append("|" + "---|" * (2 + len(sizes)))
     for name, p in lc:
         per = p.metrics.get("per_context_score", {})
         max_ctx = p.metrics.get("max_context_tokens", "-")
-        lines.append(
-            f"| {name} | {max_ctx} | {_ctx_cell(per, 256)} | "
-            f"{_ctx_cell(per, 1024)} | {_ctx_cell(per, 4096)} | "
-            f"{_ctx_cell(per, 16384)} |"
-        )
+        cells = " | ".join(_ctx_cell(per, size) for size in sizes)
+        lines.append(f"| {name} | {max_ctx} | {cells} |")
     lines.append("")
     return lines
 

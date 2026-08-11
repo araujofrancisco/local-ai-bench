@@ -10,5 +10,5 @@ services:
     volumes:
       - ./config:/config
       - ./data:/data
-      - ./plugins:/plugins
+      - ./plugins:/app/plugins
     restart: unless-stopped

@@ -309,6 +309,43 @@ def test_api_plugins_compare_default() -> None:
         assert any(p["id"] == "smoke" for p in body["plugins"])
 
 
+def test_api_weights_get_structure() -> None:
+    with TestClient(app) as client:
+        resp = client.get("/api/weights")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert set(body) == {"defaults", "overrides", "effective"}
+        assert body["defaults"]["coding"] == 1.0
+        assert set(body["effective"]) == set(body["defaults"])
+
+
+def test_api_weights_put_round_trip() -> None:
+    with TestClient(app) as client:
+        resp = client.put("/api/weights", json={"weights": {"coding": 2.5}})
+        assert resp.status_code == 200
+        assert resp.json()["effective"]["coding"] == 2.5
+        assert resp.json()["overrides"] == {"coding": 2.5}
+
+        persisted = client.get("/api/weights").json()
+        assert persisted["effective"]["coding"] == 2.5
+
+        # Setting a category back to its default prunes the override.
+        reset = client.put(
+            "/api/weights", json={"weights": {"coding": 1.0, "vision": 1.0}}
+        )
+        assert reset.status_code == 200
+        assert reset.json()["overrides"] == {}
+        assert reset.json()["effective"]["coding"] == 1.0
+
+
+def test_api_weights_put_validation() -> None:
+    with TestClient(app) as client:
+        unknown = client.put("/api/weights", json={"weights": {"nope": 1.0}})
+        assert unknown.status_code == 422
+        negative = client.put("/api/weights", json={"weights": {"coding": -1}})
+        assert negative.status_code == 422
+
+
 def test_api_export_formats() -> None:
     with TestClient(app) as client:
         for fmt in ("json", "csv", "md"):

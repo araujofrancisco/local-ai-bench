@@ -11,6 +11,7 @@ import asyncio
 import base64
 import datetime
 import inspect
+import math
 import os
 import sys
 import time
@@ -298,7 +299,7 @@ async def list_models() -> dict[str, Any]:
 
 def _effective_plugin_options(cfg: BenchmarkConfig) -> dict[str, dict[str, Any]]:
     """Plugin options = config defaults merged with persisted DB overrides."""
-    merged = {pid: dict(opts) for pid, opts in cfg.plugins.options.model_dump().items()}
+    merged = {pid: dict(opts) for pid, opts in cfg.plugins.options.items()}
     repo = BenchmarkRepository(_db_path)
     try:
         for pid, opts in repo.all_plugin_options().items():
@@ -393,6 +394,59 @@ def _validate_option_values(options: dict[str, Any]) -> None:
             )
 
 
+# ---------- Weights ----------
+
+
+_WEIGHTS_KEY = "weights"
+
+
+def _effective_weights(cfg: BenchmarkConfig, repo: BenchmarkRepository) -> dict[str, float]:
+    """Config weight defaults merged with persisted DB overrides."""
+    defaults = cfg.weights.model_dump()
+    overrides = repo.get_setting(_WEIGHTS_KEY) or {}
+    return {**defaults, **{k: float(v) for k, v in overrides.items()}}
+
+
+def _weights_payload(cfg: BenchmarkConfig, overrides: dict[str, float]) -> dict[str, Any]:
+    defaults = cfg.weights.model_dump()
+    effective = {**defaults, **{k: float(v) for k, v in overrides.items()}}
+    return {"defaults": defaults, "overrides": overrides, "effective": effective}
+
+
+@app.get("/api/weights")
+async def get_weights() -> dict[str, Any]:
+    cfg = _load_cfg()
+    repo = BenchmarkRepository(_db_path)
+    try:
+        overrides = repo.get_setting(_WEIGHTS_KEY) or {}
+        return _weights_payload(cfg, {k: float(v) for k, v in overrides.items()})
+    finally:
+        repo.close()
+
+
+class WeightsRequest(BaseModel):
+    weights: dict[str, float] = Field(default_factory=dict)
+
+
+@app.put("/api/weights")
+async def update_weights(req: WeightsRequest) -> dict[str, Any]:
+    cfg = _load_cfg()
+    defaults = cfg.weights.model_dump()
+    for key, value in req.weights.items():
+        if key not in defaults:
+            raise HTTPException(status_code=422, detail=f"Unknown weight category: {key}")
+        if not math.isfinite(value) or value < 0:
+            raise HTTPException(status_code=422, detail=f"Weight {key!r} must be a non-negative number")
+    # Prune overrides that equal the config default so resetting is a no-op.
+    overrides = {k: v for k, v in req.weights.items() if v != defaults.get(k)}
+    repo = BenchmarkRepository(_db_path)
+    try:
+        repo.set_setting(_WEIGHTS_KEY, overrides)
+    finally:
+        repo.close()
+    return _weights_payload(cfg, overrides)
+
+
 @app.put("/api/plugins/{plugin_id}/options")
 async def update_plugin_options(
     plugin_id: str, req: PluginOptionsRequest
@@ -404,7 +458,7 @@ async def update_plugin_options(
     repo = BenchmarkRepository(_db_path)
     try:
         repo.set_plugin_options(plugin_id, req.options)
-        base = _load_cfg().plugins.options.model_dump().get(plugin_id, {})
+        base = _load_cfg().plugins.options.get(plugin_id, {})
         merged = {**base, **req.options}
         return {"plugin_id": plugin_id, "options": merged}
     finally:
@@ -449,6 +503,16 @@ async def start_benchmark(req: RunRequest) -> dict[str, Any]:
     cfg.runner.repetitions = req.repetitions
     cfg.runner.warmup_runs = req.warmup_runs
     cfg.runner.max_retries = req.max_retries
+
+    # Honor UI-set category weights (DB overrides merged over config defaults).
+    repo = BenchmarkRepository(_db_path)
+    try:
+        weight_overrides = repo.get_setting(_WEIGHTS_KEY) or {}
+    finally:
+        repo.close()
+    for key, value in weight_overrides.items():
+        if hasattr(cfg.weights, key):
+            setattr(cfg.weights, key, float(value))
 
     run_id = uuid.uuid4().hex[:12]
     status = RunStatus(run_id=run_id, models=req.model_names, plugins=pids)

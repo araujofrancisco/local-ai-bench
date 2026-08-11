@@ -78,7 +78,7 @@ class RunOrchestrator:
         """Effective config options for a plugin (config defaults + overrides)."""
         if self.plugin_options is not None:
             return self.plugin_options.get(plugin_id, {})
-        defaults = self.config.plugins.options.model_dump()
+        defaults = self.config.plugins.options
         return dict(defaults.get(plugin_id, {}))
 
     def event_log(self) -> list[Event]:

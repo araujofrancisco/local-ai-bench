@@ -1,6 +1,15 @@
 # OllamaBench configuration.
 # The only required setting is how to connect to Ollama. If you omit `hosts`
-# entirely, the default local Ollama (http://127.0.0.1:11434) is used.
+# entirely (the recommended starting point), the default local Ollama
+# (http://127.0.0.1:11434) is used — or $OLLAMA_HOST if that environment
+# variable is set. Docker Compose sets OLLAMA_HOST to the host machine's
+# Ollama automatically.
+#
+# Benchmark other hosts too by listing them here, e.g.:
+#   hosts:
+#     - name: lab-server
+#       base_url: http://192.168.10.108:11434
+#       timeout_seconds: 300
 #
 # Models are NOT listed here — they are auto-detected from each host by
 # `GET /api/tags`. Choose which ones to benchmark at run time, e.g.:
@@ -17,12 +26,6 @@ app:
   output_dir: ./reports
   log_level: info
 
-hosts:
-  # Lab server (Ollama 0.32.6). Add more hosts or move this to the one you use.
-  - name: lab-server
-    base_url: http://192.168.10.108:11434
-    timeout_seconds: 300
-
 plugins:
   enabled:
     - smoke
@@ -35,13 +38,20 @@ plugins:
     - keyword
     - long_context
     - multi_context
-  # Directory scanned for extra local plugins (.py files). Inside the Docker
-  # container this is the mounted host directory ./plugins -> /plugins.
-  local_dir: /plugins
+  # Directory scanned for extra local plugins (.py files, e.g. ./plugins/keyword.py).
+  # Inside the Docker container this is the mounted host directory ./plugins -> /app/plugins.
+  local_dir: ./plugins
   # Plugin ids whose per-plugin score column appears by default on the Compare
   # page. Leave empty ([]) to show a score column for every enabled plugin that
   # ran; list specific ids to limit which columns appear by default.
-  compare_default: []
+  compare_default:
+    - translation
+    - coding
+    - vision
+    - summarization
+    - reasoning
+    - structured_output
+    - long_context
   options:
     coding:
       execute_code: false

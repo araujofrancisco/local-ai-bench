@@ -1927,6 +1927,49 @@ Assert:
 
 ## 24. Implementation Milestones
 
+### Milestone Status
+
+Updated 2026-08-11. All v1 milestones are implemented and tested (94→99 unit
+tests passing; ruff + mypy clean). Features beyond the original plan are noted.
+
+| Milestone | Status | Notes |
+|---|---|---|
+| M0 Project Scaffold | ✅ Done | Package, pyproject, ruff/mypy/pytest, CLI entry point |
+| M1 Configuration System | ✅ Done | Pydantic models, YAML load, config hash, `init` writes packaged default verbatim; default omits `hosts` and honors `OLLAMA_HOST` |
+| M2 Ollama Gateway | ✅ Done | Health, tags, show, streaming chat, timing/token metrics |
+| M3 Plugin Framework | ✅ Done | Registry, built-in + local discovery; extras: plugin source API (`/api/plugins/{id}`) |
+| M4 Benchmark Runner | ✅ Done | Orchestrator, event stream, retries/timeouts, JSONL raw persistence, active-run status restore |
+| M5 Built-in Text Benchmarks | ✅ Done | translation, summarization, reasoning, structured_output |
+| M6 Coding & Vision | ✅ Done | coding safe/unsafe modes, vision skips non-vision models |
+| M7 Context Optimizer | ✅ Done | Needle-in-haystack, candidate selection, recommendation heuristic; extra: multi_context plugin |
+| M8 Reporting | ✅ Done | JSON/Markdown/HTML, comparison tables, warnings/skips; context-window table now dynamic to probed sizes |
+| M9 CLI Polish | ✅ Done | doctor, models, plugins list, report list/view/open, history, compare, run-single |
+| M10 Web Report Viewer | ✅ Done | FastAPI + Astro; history/compare/plugins/run pages, delete UI, live active-run status, SQLite storage |
+
+Extras added beyond the v1 plan:
+
+- `multi_context` benchmark plugin (fixed context sizes + keyword matching).
+- SQLite run history (`benchmark.db`) with repository access layer.
+- Web UI: compare page with sortable/column-picker tables, multi-run compare,
+  per-plugin score/latency columns and `compare_default` config, plugin option
+  editing, bulk + per-page delete.
+- CLI `run-single` and `compare` commands.
+- Docker deployment (Dockerfile, docker-compose.yml) with a mounted `plugins/` dir.
+- Per-plugin YAML option defaults via a free-form `plugins.options` map.
+
+### Open / Next
+
+- Commit the in-flight changes: free-form `plugins.options`, `compare_default`,
+  dynamic context-window report table, weighted-plugin fallback in compare page.
+- Category weights are now editable from the Compare page (`/api/weights`), with
+  a live "Weighted" overall-score column and DB-persisted overrides that apply
+  to future runs. Stored per-run overall scores remain unchanged (recomputed
+  live in the UI).
+- Recommended default config is now zero-config for new users: `hosts` is
+  omitted (falls back to local `127.0.0.1:11434` or `$OLLAMA_HOST`), `local_dir`
+  is `./plugins` (Docker mounts it at `/app/plugins`), and `ollama-bench init`
+  writes this working starter config.
+
 ---
 
 ## Milestone 0: Project Scaffold

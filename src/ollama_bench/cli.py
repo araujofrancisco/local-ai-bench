@@ -111,7 +111,8 @@ def init(config: str | None = typer.Option(None, "--config", help="Path to write
         console.print(f"[yellow]config already exists: {dest}[/yellow]")
         raise typer.Exit(1) from None
     console.print(f"[green]Created[/green] {dest}")
-    console.print("Next: add your Ollama host(s), then run: ollama-bench doctor")
+    console.print("Next: run: ollama-bench doctor")
+    console.print("The default host is your local Ollama (http://127.0.0.1:11434, or $OLLAMA_HOST); add other hosts to the config if needed.")
 
 
 @app.command()

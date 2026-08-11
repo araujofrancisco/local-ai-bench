@@ -44,7 +44,7 @@ services:
     volumes:
       - ./config:/config
       - ./data:/data
-      - ./plugins:/plugins
+      - ./plugins:/app/plugins
     restart: unless-stopped
 ```
 
@@ -56,7 +56,7 @@ services:
 | `DATABASE_URL` | `benchmark.db` | Path to the SQLite database file. |
 | `STATIC_DIR` | `/app/static` | Where the compiled frontend assets live. |
 | `CORS_ORIGINS` | `*` | Comma-separated CORS allow-list. Lock this down in production. |
-| `OLLAMA_HOST` | `http://host.docker.internal:11434` | Reference for the host machine's Ollama. The **actual** connection settings come from the `hosts` section of the config file (see below). |
+| `OLLAMA_HOST` | `http://host.docker.internal:11434` | Ollama base URL used when the config file omits the `hosts` section (the recommended default). Point this at the host machine's Ollama. |
 
 ### Volumes
 
@@ -64,14 +64,24 @@ services:
 | --- | --- |
 | `./config:/config` | Configuration file (`default.yaml`). Mounted read-write; the app only reads it. |
 | `./data:/data` | SQLite database (`benchmark.db`) — benchmark results **and** plugin option overrides. |
-| `./plugins:/plugins` | Local plugin `.py` files. |
+| `./plugins:/app/plugins` | Local plugin `.py` files. Mounted at the app workdir so the default `local_dir: ./plugins` resolves to it. |
 
 ---
 
 ## Configuration
 
-The container uses `config/default.yaml` mounted from the host directory. The
-only required setting is how to connect to Ollama:
+The container uses `config/default.yaml` mounted from the host directory.
+
+The recommended starting point **omits** `hosts` entirely — the app then uses
+`$OLLAMA_HOST` (set by docker-compose to the host machine's Ollama) or falls
+back to the local `http://127.0.0.1:11434`:
+
+```yaml
+# hosts omitted -> uses $OLLAMA_HOST / 127.0.0.1:11434
+```
+
+To benchmark a specific machine (for example another host on your LAN), list
+it explicitly:
 
 ```yaml
 hosts:

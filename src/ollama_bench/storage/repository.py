@@ -86,6 +86,11 @@ CREATE TABLE IF NOT EXISTS plugin_options (
     plugin_id TEXT PRIMARY KEY,
     options TEXT
 );
+
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
 """
 
 
@@ -330,6 +335,23 @@ class BenchmarkRepository:
             "SELECT plugin_id, options FROM plugin_options"
         ).fetchall()
         return {row["plugin_id"]: json.loads(row["options"]) for row in rows}
+
+    def get_setting(self, key: str) -> dict[str, Any] | None:
+        """Read a JSON settings blob, or None when unset."""
+        row = self._conn.execute(
+            "SELECT value FROM settings WHERE key = ?", (key,)
+        ).fetchone()
+        if row is None:
+            return None
+        return cast("dict[str, Any]", json.loads(row["value"]))
+
+    def set_setting(self, key: str, value: dict[str, Any]) -> None:
+        """Persist a JSON settings blob, replacing any existing value."""
+        self._conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+            (key, json.dumps(value)),
+        )
+        self._conn.commit()
 
     def get_model_history(self, model_name: str) -> list[dict[str, Any]]:
         return [

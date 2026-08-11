@@ -55,9 +55,11 @@ SQLite for comparison. It ships with both a terminal CLI and a web UI
 ```bash
 git clone <repo-url> ollama-bench
 cd ollama-bench
-# point config/default.yaml at your Ollama host first
 docker compose up -d --build
 ```
+
+The shipped `config/default.yaml` needs no changes: it omits `hosts` and
+docker-compose points `OLLAMA_HOST` at your host machine's Ollama.
 
 Open <http://localhost:8000>.
 
@@ -110,12 +112,14 @@ ollama-bench run --models 'qwen*'
 ## Configuration
 
 Single YAML file (see `config/default.yaml`; `ollama-bench init` writes a
-copy). The only required setting is the Ollama host:
+copy). The recommended default **omits** `hosts` — the app then uses
+`$OLLAMA_HOST` when set, or the local `http://127.0.0.1:11434`. To benchmark a
+specific machine, list it:
 
 ```yaml
 hosts:
   - name: lab-server
-    base_url: http://host.docker.internal:11434
+    base_url: http://192.168.10.108:11434
     timeout_seconds: 300
 ```
 
@@ -143,7 +147,7 @@ selected at run time.
 | --- | --- | --- |
 | Dashboard | `/` | Model cards, stats, recent runs (delete here too), live Active Runs panel |
 | Run | `/run` | Start benchmarks; live progress; resumes active runs (`?run=<id>` to track) |
-| Compare | `/compare` | Side-by-side performance (`?run=<id>` for one run, with a delete action) |
+| Compare | `/compare` | Side-by-side performance (`?run=<id>` for one run, with a delete action); sortable/selectable columns; category-weights editor with live weighted score |
 | History | `/history` | Filter by model/host/date/search; running-status chips; single + bulk delete |
 | Plugins | `/plugins` | Details, modalities, and an options editor |
 

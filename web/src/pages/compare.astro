@@ -13,9 +13,23 @@ import MainLayout from '../layouts/MainLayout.astro';
         <span style="color:#e2e8f0; font-size:.9rem; font-weight:500;">Columns</span>
         <button id="toggle-columns" type="button" style="background:#0f172a; color:#94a3b8; border:1px solid #334155; border-radius:.25rem; padding:.15rem .5rem; cursor:pointer; font-size:.75rem;">▾</button>
         <button id="reset-columns" type="button" style="background:transparent; color:#94a3b8; border:1px solid #334155; border-radius:.25rem; padding:.15rem .5rem; cursor:pointer; font-size:.75rem;">Reset</button>
+        <button id="toggle-weights" type="button" style="background:#0f172a; color:#e2e8f0; border:1px solid #334155; border-radius:.25rem; padding:.15rem .5rem; cursor:pointer; font-size:.75rem;">⚖ Weights</button>
       </div>
     </div>
     <div id="column-list-inner" style="display:none; flex-wrap:wrap; gap:.5rem;"></div>
+  </div>
+
+  <!-- Category weights panel -->
+  <div id="weights-panel" style="display:none; margin-top:.5rem; background:#0f172a; border:1px solid #334155; border-radius:.5rem; padding:1rem;">
+    <div style="display:flex; align-items:center; gap:.5rem; margin-bottom:.75rem;">
+      <span style="color:#e2e8f0; font-size:.9rem; font-weight:500;">Category weights</span>
+      <span style="color:#64748b; font-size:.8rem;">Weighting controls each category's contribution to the weighted score below. Saved weights also apply to future runs.</span>
+    </div>
+    <div id="weights-inputs" style="display:flex; flex-wrap:wrap; gap:1rem;"></div>
+    <div style="display:flex; gap:.75rem; margin-top:1rem;">
+      <button id="weights-save" type="button" style="background:#3b82f6; color:white; border:none; border-radius:.375rem; padding:.375rem 1rem; cursor:pointer; font-size:.85rem;">Save weights</button>
+      <button id="weights-reset" type="button" style="background:transparent; color:#94a3b8; border:1px solid #334155; border-radius:.375rem; padding:.375rem 1rem; cursor:pointer; font-size:.85rem;">Reset to defaults</button>
+    </div>
   </div>
 
   <div id="compare">
@@ -39,7 +53,15 @@ import MainLayout from '../layouts/MainLayout.astro';
 
     // Column registry: key -> {label, hint, group, type, align, extract, format?, color?, defaultVisible}
     function buildColumns(plugins, compareDefaultIds) {
+      // Fallback: if compare_default is empty, use plugins that have weights defined
+      // (these are the "core" plugins that contribute to the overall score)
+      const WEIGHTED_PLUGINS = new Set([
+        'translation', 'coding', 'vision', 'summarization', 
+        'reasoning', 'structured_output', 'long_context'
+      ]);
+      
       const compareDefault = new Set(compareDefaultIds || []);
+      const useFallback = compareDefault.size === 0;
       const cols = {
         model: { label: 'Model', hint: HINTS.Model, group: 'General', type: 'text', align: 'left',
           extract: (r) => r.model_name, defaultVisible: true },
@@ -47,6 +69,8 @@ import MainLayout from '../layouts/MainLayout.astro';
           extract: (r) => r.run_id, defaultVisible: false },
         score: { label: 'Score', hint: HINTS.Score, group: 'General', type: 'number', align: 'right',
           extract: (r) => r.overall_score, format: (v) => formatNum(v, 3), color: (v) => scoreColor(v), defaultVisible: true },
+        weighted: { label: 'Weighted', hint: 'Overall score recomputed live from per-plugin scores using the current category weights.', group: 'General', type: 'number', align: 'right',
+          extract: (r) => weightedScore(r), format: (v) => formatNum(v, 3), color: (v) => scoreColor(v), defaultVisible: true },
         p50: { label: 'p50 (ms)', hint: HINTS['p50 (ms)'], group: 'Latency', type: 'number', align: 'right',
           extract: (r) => r.latency_p50_ms, defaultVisible: true },
         p95: { label: 'p95 (ms)', hint: HINTS['p95 (ms)'], group: 'Latency', type: 'number', align: 'right',
@@ -66,7 +90,7 @@ import MainLayout from '../layouts/MainLayout.astro';
       // config list (empty => all run plugins default-on).
       const seen = new Set();
       const active = (plugins || []);
-      const allDefault = compareDefault.size === 0;
+      // Use fallback: if compare_default is empty, only show weighted plugins by default
       for (const p of active) {
         const id = p.plugin_id;
         if (seen.has(id)) continue;
@@ -76,7 +100,7 @@ import MainLayout from '../layouts/MainLayout.astro';
           group: 'Per-plugin', type: 'number', align: 'right',
           extract: (r) => (r.plugins || []).find((x) => x.plugin_id === id)?.score ?? null,
           format: (v) => formatNum(v, 3), color: (v) => scoreColor(v),
-          defaultVisible: allDefault || compareDefault.has(id),
+          defaultVisible: useFallback ? WEIGHTED_PLUGINS.has(id) : compareDefault.has(id),
         };
         cols[`plugin:${id}:p50`] = {
           label: `${id} p50 (ms)`, hint: `Plugin '${id}' median generation latency.`,
@@ -212,6 +236,22 @@ import MainLayout from '../layouts/MainLayout.astro';
 
     let currentRunIds = [];
     let currentCols = {};
+    let defaultWeights = {};
+    let currentWeights = {};
+    const categoryOf = {}; // plugin_id -> category
+
+    function weightedScore(row) {
+      const scored = [];
+      for (const p of (row.plugins || [])) {
+        if (p.score == null) continue;
+        const cat = categoryOf[p.plugin_id];
+        const w = cat && currentWeights[cat] != null ? currentWeights[cat] : 1.0;
+        scored.push([p.score, w]);
+      }
+      const totalW = scored.reduce((s, [, w]) => s + w, 0);
+      if (!totalW) return null;
+      return scored.reduce((s, [sc, w]) => s + sc * w, 0) / totalW;
+    }
 
     async function deleteRun(runId) {
       const confirmed = await confirmModal({
@@ -294,11 +334,15 @@ import MainLayout from '../layouts/MainLayout.astro';
         const params = new URLSearchParams(location.search);
         const runIds = params.getAll('run');
         currentRunIds = runIds;
-        const [plugins, pluginIndex] = await Promise.all([
+        const [plugins, pluginIndex, weightsData] = await Promise.all([
           collectPlugins(runIds),
-          fetch('/api/plugins').then((r) => (r.ok ? r.json() : { compare_default: [] })),
+          fetch('/api/plugins').then((r) => (r.ok ? r.json() : { compare_default: [], plugins: [] })),
+          fetch('/api/weights').then((r) => (r.ok ? r.json() : { defaults: {}, effective: {} })),
         ]);
         const compareDefault = pluginIndex.compare_default || [];
+        defaultWeights = weightsData.defaults || {};
+        currentWeights = weightsData.effective || {};
+        for (const p of (pluginIndex.plugins || [])) categoryOf[p.id] = p.category;
         currentCols = buildColumns(plugins, compareDefault);
         const keys = storage.orderOk(currentCols);
         // Seed localStorage with default visibility (only defaultVisible cols) on first visit.
@@ -408,6 +452,78 @@ import MainLayout from '../layouts/MainLayout.astro';
       localStorage.removeItem('compare.columns.visible');
       localStorage.removeItem('compare.columns.order');
       load();
+    });
+
+    // --- Weights panel ---
+    function renderWeightsInputs() {
+      const list = document.getElementById('weights-inputs');
+      if (!list) return;
+      list.innerHTML = '';
+      const frag = document.createElement('div');
+      frag.style.display = 'contents';
+      for (const [cat, def] of Object.entries(defaultWeights)) {
+        const val = currentWeights[cat] != null ? currentWeights[cat] : def;
+        const changed = Number(val) !== Number(def);
+        frag.insertAdjacentHTML('beforeend',
+          `<label style="display:flex; flex-direction:column; gap:.25rem; font-size:.8rem; color:#94a3b8;">
+            <span>${esc(cat)}</span>
+            <input type="number" min="0" step="0.1" data-weight="${esc(cat)}" value="${esc(String(val))}"
+              style="width:5.5rem; background:#1e293b; color:#e2e8f0; border:1px solid ${changed ? '#3b82f6' : '#334155'}; border-radius:.25rem; padding:.3rem .5rem;">
+          </label>`);
+      }
+      list.appendChild(frag);
+    }
+
+    document.getElementById('toggle-weights')?.addEventListener('click', () => {
+      const panel = document.getElementById('weights-panel');
+      if (!panel) return;
+      const show = panel.style.display === 'none';
+      panel.style.display = show ? 'block' : 'none';
+      if (show) renderWeightsInputs();
+    });
+
+    document.getElementById('weights-save')?.addEventListener('click', async () => {
+      const weights = {};
+      for (const inp of document.querySelectorAll('#weights-inputs input[data-weight]')) {
+        weights[inp.dataset.weight] = parseFloat(inp.value);
+      }
+      try {
+        const res = await fetch('/api/weights', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ weights }),
+        });
+        if (!res.ok) throw new Error(`Save failed (HTTP ${res.status})`);
+        const data = await res.json();
+        defaultWeights = data.defaults;
+        currentWeights = data.effective;
+        renderWeightsInputs();
+        toast('Weights saved', 'success');
+        load();
+      } catch (err) {
+        toast(`Error: ${err.message}`, 'error');
+      }
+    });
+
+    document.getElementById('weights-reset')?.addEventListener('click', async () => {
+      const weights = {};
+      for (const [cat, def] of Object.entries(defaultWeights)) weights[cat] = def;
+      try {
+        const res = await fetch('/api/weights', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ weights }),
+        });
+        if (!res.ok) throw new Error(`Reset failed (HTTP ${res.status})`);
+        const data = await res.json();
+        defaultWeights = data.defaults;
+        currentWeights = data.effective;
+        renderWeightsInputs();
+        toast('Weights reset to defaults', 'success');
+        load();
+      } catch (err) {
+        toast(`Error: ${err.message}`, 'error');
+      }
     });
 
     load();

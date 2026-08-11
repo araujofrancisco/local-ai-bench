@@ -182,6 +182,13 @@ excluded from selection).
   selected run(s). The same detail is persisted in SQLite and available via
   `GET /api/benchmarks/{run_id}/cases`. Tool/transport failures and
   `evaluate()` exceptions both populate the `error` field.
+- **Category weights** — click the **⚖ Weights** button to open the category
+  weights editor. Adjust how much each category contributes to the overall
+  score: the **Weighted** column recomputes every model's overall score live
+  from its per-plugin scores. **Save weights** persists overrides (via
+  `PUT /api/weights`) so future runs use them; **Reset to defaults** clears
+  overrides. Weights default to `1.0` for every category, and unlisted plugin
+  categories (e.g. `multi_context`) always weight `1.0`.
 
 ### Plugins page
 
@@ -260,6 +267,8 @@ Base URL: `http://<host>:8000`. Interactive OpenAPI docs at `/docs`.
 | GET | `/api/plugins` | Plugins with description, dataset version, modalities, effective options, and `compare_default` (ids shown by default on Compare) |
 | GET | `/api/plugins/{id}` | Plugin detail incl. `source_file` and base64-encoded `source` |
 | PUT | `/api/plugins/{id}/options` | Persist option overrides for a plugin |
+| GET | `/api/weights` | Category weights: `defaults`, persisted `overrides`, merged `effective` |
+| PUT | `/api/weights` | Persist weight overrides (body `{"weights":{"coding":2.5}}`); values equal to defaults are pruned |
 | POST | `/api/benchmarks/run` | Start a benchmark run (runs in the background) |
 | GET | `/api/benchmarks` | List persisted runs (`search`, `model`, `host`, `date_from`, `date_to`) |
 | GET | `/api/benchmarks/active` | Live pending/running runs (in-memory; not persisted) |
