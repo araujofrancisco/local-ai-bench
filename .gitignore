@@ -17,6 +17,7 @@ reports/
 *.jsonl
 !datasets/**/*.json
 data/*.db
+logs/*.log
 
 # Generated knowledge-graph output
 graphify-out/
