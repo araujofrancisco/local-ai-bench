@@ -123,8 +123,8 @@ async def test_coding_execute_code_true_runs_tests() -> None:
         ctx,
     )
     assert ev.passed is True
-    assert ev.metrics["tests_total"] == 3
-    assert ev.metrics["tests_passed"] == 3
+    assert ev.metrics["tests_total"] == len(case.expected["tests"])
+    assert ev.metrics["tests_passed"] == len(case.expected["tests"])
 
 
 async def test_coding_timeout_seconds_is_honored() -> None:
@@ -136,6 +136,100 @@ async def test_coding_timeout_seconds_is_honored() -> None:
     sleepy = "import time\n\ndef reverse_string(s):\n    time.sleep(60)\n    return s\n"
     ev = await plugin.evaluate(case, _resp(sleepy), ctx)
     assert ev.passed is False
+
+
+async def test_coding_execute_code_defaults_to_true() -> None:
+    from ollama_bench.plugins.builtin.coding import CodingPlugin
+
+    plugin = CodingPlugin()
+    ctx = RunContext({})
+    ev = await plugin.evaluate(
+        _first_case(plugin, ctx),
+        _resp("def reverse_string(s):\n    return s[::-1]\n"),
+        ctx,
+    )
+    assert ev.metrics["execute_code"] is True
+    assert ev.passed is True
+
+
+def test_coding_dataset_v2_and_expanded_cases() -> None:
+    from ollama_bench.plugins.builtin.coding import CodingPlugin
+
+    assert CodingPlugin.dataset_version == "v2"
+    plugin = CodingPlugin()
+    cases = list(plugin.cases(RunContext({})))
+    assert len(cases) >= 12
+    ids = {c.id for c in cases}
+    assert {
+        "code_lru_cache_0011",
+        "code_trie_0012",
+        "code_edit_distance_0013",
+        "code_n_queens_0014",
+    } <= ids
+
+
+async def test_coding_class_based_solution_lru() -> None:
+    from ollama_bench.plugins.builtin.coding import CodingPlugin
+
+    plugin = CodingPlugin()
+    ctx = RunContext({"execute_code": True, "timeout_seconds": 15})
+    case = next(c for c in plugin.cases(ctx) if c.id == "code_lru_cache_0011")
+    solution = (
+        "class LRUCache:\n"
+        "    def __init__(self, capacity):\n"
+        "        self.cap = capacity\n"
+        "        self.d = {}\n"
+        "        self.order = []\n"
+        "    def _touch(self, key):\n"
+        "        try:\n"
+        "            self.order.remove(key)\n"
+        "        except ValueError:\n"
+        "            pass\n"
+        "        self.order.append(key)\n"
+        "    def get(self, key):\n"
+        "        if key not in self.d: return -1\n"
+        "        self._touch(key)\n"
+        "        return self.d[key]\n"
+        "    def put(self, key, value):\n"
+        "        if key not in self.d and len(self.d) >= self.cap:\n"
+        "            old = self.order.pop(0)\n"
+        "            del self.d[old]\n"
+        "        self.d[key] = value\n"
+        "        self._touch(key)\n"
+    )
+    ev = await plugin.evaluate(case, _resp(solution), ctx)
+    assert ev.passed is True, ev
+    assert ev.score == 1.0
+
+
+async def test_coding_partial_credit_on_failed_assertions() -> None:
+    from ollama_bench.plugins.builtin.coding import CodingPlugin
+
+    plugin = CodingPlugin()
+    ctx = RunContext({"execute_code": True, "timeout_seconds": 15})
+    case = next(c for c in plugin.cases(ctx) if c.id == "code_max_subarray_0009")
+    # Overconfident Kadane that always restarts from 0 -> wrong on all-negative input.
+    wrong = (
+        "def max_subarray(nums):\n"
+        "    best = cur = 0\n"
+        "    for n in nums:\n"
+        "        cur = max(0, cur + n)\n"
+        "        best = max(best, cur)\n"
+        "    return best\n"
+    )
+    ev = await plugin.evaluate(case, _resp(wrong), ctx)
+    assert 0.0 < ev.score < 1.0
+    assert ev.passed is False
+
+
+async def test_coding_extracts_fenced_code_from_prose() -> None:
+    from ollama_bench.plugins.builtin.coding import CodingPlugin
+
+    plugin = CodingPlugin()
+    ctx = RunContext({"execute_code": True, "timeout_seconds": 10})
+    reply = "Here's my solution:\n```python\ndef reverse_string(s):\n    return s[::-1]\n```\nHope this helps!"
+    ev = await plugin.evaluate(_first_case(plugin, ctx), _resp(reply), ctx)
+    assert ev.passed is True
 
 
 def test_vision_max_image_dimension_caps_size() -> None:

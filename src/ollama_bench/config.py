@@ -184,7 +184,9 @@ plugins:
     - long_context
   options:
     coding:
-      execute_code: false
+      # WARNING: executing code runs the model's generated solution in an
+      # isolated subprocess (python -I). Only enable for code you trust.
+      execute_code: true
       timeout_seconds: 30
     vision:
       max_image_dimension: 768

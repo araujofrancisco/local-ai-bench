@@ -156,6 +156,69 @@ def extract_code(source: str) -> str:
     return source
 
 
+_CODE_STARTERS = ("def ", "async def ", "class ", "import ", "from ", "@")
+
+
+def _first_code_index(lines: list[str]) -> int | None:
+    """Index of the first line that plausibly begins a Python module."""
+    for i, raw in enumerate(lines):
+        s = raw.strip()
+        if not s or s.startswith("#"):
+            continue
+        if s.startswith(_CODE_STARTERS):
+            return i
+    return None
+
+
+def extract_python(source: str) -> str:
+    """Extract a runnable Python module from noisy model output.
+
+    Strategy (in order): (1) the whole text parses; (2) a fenced code block;
+    (3) the longest code-looking suffix (skipping leading prose/comments).
+    """
+    text = source.strip()
+    if not text:
+        return text
+    try:
+        ast.parse(text)
+        return text
+    except SyntaxError:
+        pass
+    fenced = extract_code(text).strip()
+    if fenced and fenced != text:
+        try:
+            ast.parse(fenced)
+            return fenced
+        except SyntaxError:
+            pass
+    lines = text.splitlines()
+    idx = _first_code_index(lines)
+    if idx is None:
+        return text
+    # Longest suffix that is still valid Python.
+    for end in range(len(lines), idx, -1):
+        candidate = "\n".join(lines[idx:end])
+        try:
+            ast.parse(candidate)
+            return candidate
+        except SyntaxError:
+            continue
+    return text
+
+
+def symbol_defined(source: str, name: str) -> bool:
+    """True if a module defines a function or class with the given name."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+    return any(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        and node.name == name
+        for node in ast.walk(tree)
+    )
+
+
 def most_common(items: list[str]) -> str | None:
     if not items:
         return None
