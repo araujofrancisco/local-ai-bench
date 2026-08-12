@@ -1,9 +1,9 @@
-# OllamaBench
+# LocalAIBench
 
 Local-first, plugin-based LLM benchmarking for [Ollama](https://ollama.com)
 hosts on your own network.
 
-OllamaBench discovers models from one or more Ollama hosts, runs configurable
+LocalAIBench discovers models from one or more Ollama hosts, runs configurable
 benchmark plugins against them, scores the results, and stores everything in
 SQLite for comparison. It ships with both a terminal CLI and a web UI
 (FastAPI + Astro) that you can deploy in a single Docker container.
@@ -53,8 +53,8 @@ SQLite for comparison. It ships with both a terminal CLI and a web UI
 ## Quick start (Docker)
 
 ```bash
-git clone <repo-url> ollama-bench
-cd ollama-bench
+git clone <repo-url> local-ai-bench
+cd local-ai-bench
 docker compose up -d --build
 ```
 
@@ -73,12 +73,12 @@ See [docs/deployment.md](docs/deployment.md) for details, including the
 ```bash
 python -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
-ollama-bench init
-ollama-bench doctor          # verify host + plugins
-ollama-bench run --models 'qwen*'
+local-ai-bench init
+local-ai-bench doctor          # verify host + plugins
+local-ai-bench run --models 'qwen*'
 ```
 
-`ollama-bench --help` lists every command. Full walkthroughs:
+`local-ai-bench --help` lists every command. Full walkthroughs:
 [docs/usage.md](docs/usage.md).
 
 ---
@@ -97,13 +97,13 @@ ollama-bench run --models 'qwen*'
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Backend**: FastAPI (`src/ollama_bench/api/app.py`) — API, WebSocket
+- **Backend**: FastAPI (`src/local_ai_bench/api/app.py`) — API, WebSocket
   progress, static serving.
 - **Runner**: `RunOrchestrator` drives hosts/models/plugins with events,
-  retries, and weighted scoring (`src/ollama_bench/runner/orchestrator.py`).
-- **Plugins**: registry + built-ins (`src/ollama_bench/plugins/`), local
+  retries, and weighted scoring (`src/local_ai_bench/runner/orchestrator.py`).
+- **Plugins**: registry + built-ins (`src/local_ai_bench/plugins/`), local
   plugins scanned from `plugins/`.
-- **Storage**: SQLite via `BenchmarkRepository` (`src/ollama_bench/storage/repository.py`).
+- **Storage**: SQLite via `BenchmarkRepository` (`src/local_ai_bench/storage/repository.py`).
 - **Frontend**: Astro pages in `web/src/pages/`, client-side rendering that
   talks to the API.
 
@@ -111,7 +111,7 @@ ollama-bench run --models 'qwen*'
 
 ## Configuration
 
-Single YAML file (see `config/default.yaml`; `ollama-bench init` writes a
+Single YAML file (see `config/default.yaml`; `local-ai-bench init` writes a
 copy). The recommended default **omits** `hosts` — the app then uses
 `$OLLAMA_HOST` when set, or the local `http://127.0.0.1:11434`. To benchmark a
 specific machine, list it:
@@ -155,12 +155,12 @@ selected at run time.
 
 ## Documentation
 
-- **[docs/usage.md](docs/usage.md)** — CLI commands, Web UI walkthrough,
-  writing local plugins, API reference.
+- **[docs/usage.md](docs/usage.md)** — CLI commands, Web UI walkthrough, API reference.
+- **[docs/plugins.md](docs/plugins.md)** — plugin architecture, every built-in plugin,
+  author a local plugin, options & metrics reference.
 - **[docs/deployment.md](docs/deployment.md)** — Docker compose, environment
   variables, volumes, operations, local development.
-- **[docs/troubleshooting.md](docs/troubleshooting.md)** — common issues and
-  fixes.
+- **[docs/troubleshooting.md](docs/troubleshooting.md)** — common issues and fixes.
 
 Interactive API docs are served at `http://localhost:8000/docs`.
 
@@ -170,7 +170,7 @@ Interactive API docs are served at `http://localhost:8000/docs`.
 
 ```bash
 pip install -e ".[dev]"          # backend deps + ruff/mypy/pytest
-uvicorn ollama_bench.api.app:app --reload --host 0.0.0.0 --port 8000
+uvicorn local_ai_bench.api.app:app --reload --host 0.0.0.0 --port 8000
 
 cd web && npm install            # frontend
 npm run dev                      # Astro dev server on http://localhost:4321

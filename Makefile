@@ -1,7 +1,7 @@
 .PHONY: help build up down logs clean frontend-dev backend-dev test
 
 help:
-	@echo "OllamaBench Docker + Astro Deployment"
+	@echo "LocalAIBench Docker + Astro Deployment"
 	@echo ""
 	@echo "Available targets:"
 	@echo "  make build         - Build Docker images"
@@ -32,7 +32,7 @@ frontend-dev:
 	cd web && npm install && npm run dev
 
 backend-dev:
-	uvicorn ollama_bench.api.app:app --reload --host 0.0.0.0 --port 8000
+	uvicorn local_ai_bench.api.app:app --reload --host 0.0.0.0 --port 8000
 
 test:
 	pytest

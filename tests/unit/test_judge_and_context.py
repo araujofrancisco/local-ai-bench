@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from ollama_bench.context.optimizer import recommend
-from ollama_bench.judge import Judge, _parse_judge_output
+from local_ai_bench.context.optimizer import recommend
+from local_ai_bench.judge import Judge, _parse_judge_output
 
 # ---------- Judge output parsing ----------
 

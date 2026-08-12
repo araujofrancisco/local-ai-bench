@@ -76,6 +76,32 @@ import MainLayout from '../layouts/MainLayout.astro';
       return null;
     };
 
+    const pluginMetricsTooltip = (row, pluginId) => {
+      const p = (row.plugins || []).find((x) => x.plugin_id === pluginId);
+      if (!p || !p.metrics) return null;
+      let m;
+      try { m = JSON.parse(p.metrics); } catch { return null; }
+      if (!m) return null;
+      const parts = [];
+      if (m.pass_at_1 != null) parts.push('pass@1 ' + formatNum(m.pass_at_1, 3));
+      if (m.syntax_ok_ratio != null) parts.push('syntax ok ' + formatNum(m.syntax_ok_ratio, 3));
+      if (m.tests_total != null) {
+        const ratio = m.tests_pass_ratio != null ? formatNum(m.tests_pass_ratio, 3) : null;
+        parts.push('tests ' + m.tests_passed_total + '/' + m.tests_total + (ratio != null ? ' (' + ratio + ')' : ''));
+      }
+      if (m.perf_checked_cases) {
+        const ok = m.complexity_ok_ratio != null ? formatNum(m.complexity_ok_ratio, 3) : null;
+        parts.push('perf checked ' + m.perf_checked_cases + (ok != null ? ' · ok ' + ok : ''));
+      }
+      if (m.approach_penalized_cases) {
+        parts.push('penalized ' + m.approach_penalized_cases);
+      }
+      if (m.judge_scored_cases) {
+        parts.push('judge ' + m.judge_scored_cases);
+      }
+      return parts.length ? parts.join(' · ') : null;
+    };
+
     // Column registry: key -> {label, hint, group, type, align, extract, format?, color?, defaultVisible}
     function buildColumns(plugins, compareDefaultIds, isMultiRun = false) {
       // Fallback: if compare_default is empty, use plugins that have weights defined
@@ -218,13 +244,17 @@ import MainLayout from '../layouts/MainLayout.astro';
             ${sortRows(rows, cols, s.key, s.dir).map((row, i) => `
               <tr style="border-bottom:1px solid #334155; background:${i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)'};">
                 ${keys.map((k) => {
-                  const c = cols[k];
-                  const val = c.extract(row);
-                  const color = (typeof c.color === 'function') ? c.color(val) : 'inherit';
-                  const display = typeof c.format === 'function' ? c.format(val) : (val === null || val === undefined ? '-' : esc(val));
-                  const isNum = c.type === 'number' && val != null && !Number.isNaN(Number(val));
-                  return `<td style="text-align:${c.align}; padding:1rem; color:${color}; ${isNum ? 'font-variant-numeric:tabular-nums;' : ''}">${display}</td>`;
-                }).join('')}
+                   const c = cols[k];
+                   const val = c.extract(row);
+                   const color = (typeof c.color === 'function') ? c.color(val) : 'inherit';
+                   const display = typeof c.format === 'function' ? c.format(val) : (val === null || val === undefined ? '-' : esc(val));
+                   const isNum = c.type === 'number' && val != null && !Number.isNaN(Number(val));
+                   const isPluginScore = k.startsWith('plugin:') && k.endsWith(':score');
+                   const pluginId = isPluginScore ? k.slice(7, -6) : null;
+                   const tip = isPluginScore ? pluginMetricsTooltip(row, pluginId) : null;
+                   const titleAttr = tip ? ` title="${esc(tip)}"` : '';
+                   return `<td style="text-align:${c.align}; padding:1rem; color:${color}; ${isNum ? 'font-variant-numeric:tabular-nums;' : ''}"${titleAttr}>${display}</td>`;
+                 }).join('')}
               </tr>`).join('')}
           </tbody>
         </table>

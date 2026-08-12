@@ -62,7 +62,7 @@ import MainLayout from '../layouts/MainLayout.astro';
     const wsUrl = (runId) =>
       `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?run_id=${encodeURIComponent(runId)}`;
 
-    const ACTIVE_RUN_KEY = 'ollama-bench.active-run';
+    const ACTIVE_RUN_KEY = 'local-ai-bench.active-run';
     const storeRun = (runId) => { try { localStorage.setItem(ACTIVE_RUN_KEY, runId); } catch (e) {} };
     const clearRun = () => { try { localStorage.removeItem(ACTIVE_RUN_KEY); } catch (e) {} };
 

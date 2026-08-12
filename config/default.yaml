@@ -1,28 +1,27 @@
-# OllamaBench configuration.
+# LocalAIBench configuration.
 # The only required setting is how to connect to Ollama. If you omit `hosts`
-# entirely (the recommended starting point), the default local Ollama
-# (http://127.0.0.1:11434) is used — or $OLLAMA_HOST if that environment
-# variable is set. Docker Compose sets OLLAMA_HOST to the host machine's
-# Ollama automatically.
+# entirely, the default local Ollama (http://127.0.0.1:11434) is used — or
+# $OLLAMA_HOST if that environment variable is set. Docker Compose sets
+# OLLAMA_HOST to the host machine's Ollama automatically.
 #
-# Benchmark other hosts too by listing them here, e.g.:
-#   hosts:
-#     - name: lab-server
-#       base_url: http://192.168.10.108:11434
-#       timeout_seconds: 300
+# When the Ollama server is on another machine, list it here:
+hosts:
+  - name: local
+    base_url: http://192.168.10.108:11434
+    timeout_seconds: 300
 #
 # Models are NOT listed here — they are auto-detected from each host by
 # `GET /api/tags`. Choose which ones to benchmark at run time, e.g.:
-#   ollama-bench run --models 'qwen*'
-#   ollama-bench run --models llama3.2:latest,qwen2.5-coder:14b
-#   ollama-bench run --exclude '*:0.8b'
-#   ollama-bench run --interactive
+#   local-ai-bench run --models 'qwen*'
+#   local-ai-bench run --models llama3.2:latest,qwen2.5-coder:14b
+#   local-ai-bench run --exclude '*:0.8b'
+#   local-ai-bench run --interactive
 #
 # With no --models/--exclude/--interactive flags, every autodetected model is
 # benchmarked. There is no "models" section in this file.
 
 app:
-  name: OllamaBench
+  name: LocalAIBench
   output_dir: ./reports
   log_level: info
 
@@ -58,6 +57,17 @@ plugins:
       # isolated subprocess (python -I). Only enable for code you trust.
       execute_code: true
       timeout_seconds: 30
+      # Relative big-O checks: time the solution on a small and a large probe
+      # and require large/small < perf_ratio_default so O(n^2) answers that
+      # pass the small assertions are still penalized.
+      enable_perf: true
+      perf_ratio_default: 6.0
+      # When a solution passes every executable check but a static AST scan
+      # flags a known brute-force construct, deduct approach_penalty from the
+      # case score so writing optimal code is rewarded.
+      approach_penalty: 0.1
+      # Optional LLM-as-judge code-quality blend weight (0 = disabled).
+      judge_weight: 0.0
     vision:
       max_image_dimension: 768
     multi_context:

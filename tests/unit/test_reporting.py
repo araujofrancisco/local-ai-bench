@@ -2,7 +2,7 @@
 
 import json
 
-from ollama_bench.domain.models import (
+from local_ai_bench.domain.models import (
     BenchmarkCase,
     CaseResult,
     Evaluation,
@@ -15,7 +15,7 @@ from ollama_bench.domain.models import (
     TimingMetrics,
     TokenMetrics,
 )
-from ollama_bench.reporting.repository import write_report
+from local_ai_bench.reporting.repository import write_report
 
 
 def _result(model_name: str = "llama3.2:latest") -> RunResult:
@@ -98,7 +98,7 @@ def test_html_contains_key_sections(tmp_path):
     html = (tmp_path / "abc123" / "report.html").read_text(encoding="utf-8")
 
     assert "<!doctype html>" in html
-    assert "<h1>OllamaBench report</h1>" in html
+    assert "<h1>LocalAIBench report</h1>" in html
     assert "llama3.2:latest" in html
     assert "Context-window recommendations" in html
     assert "Context-window performance" in html

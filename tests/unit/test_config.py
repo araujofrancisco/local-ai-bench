@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from ollama_bench.config import (
+from local_ai_bench.config import (
     DEFAULT_CONFIG_TEXT,
     BenchmarkConfig,
     config_hash,
@@ -13,7 +13,7 @@ from ollama_bench.config import (
 
 VALID_YAML = """\
 app:
-  name: OllamaBench
+  name: LocalAIBench
   output_dir: ./reports
 
 hosts:
@@ -67,7 +67,7 @@ def test_write_default_config(tmp_path):
     write_default_config(target)
     assert target.exists()
     cfg = load_config(target)
-    assert cfg.app.name == "OllamaBench"
+    assert cfg.app.name == "LocalAIBench"
 
 
 def test_default_config_falls_back_to_local_host(tmp_path):
@@ -121,7 +121,7 @@ def test_default_config_matches_packaged(tmp_path):
 
 
 def test_packaged_default_config_falls_back(tmp_path, monkeypatch):
-    import ollama_bench.config as config_mod
+    import local_ai_bench.config as config_mod
 
     monkeypatch.setattr(config_mod, "_packaged_default_config", lambda: None)
     p = tmp_path / "config.yaml"

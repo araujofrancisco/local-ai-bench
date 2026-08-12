@@ -1,6 +1,6 @@
 """API boot, repository round-trip, and live-progress logic tests.
 
-Environment variables must be set before ``ollama_bench.api.app`` is imported
+Environment variables must be set before ``local_ai_bench.api.app`` is imported
 so the module-level config/DB defaults point at isolated test artifacts.
 """
 
@@ -18,9 +18,9 @@ os.environ["CONFIG_PATH"] = str(Path(__file__).resolve().parents[2] / "config" /
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from ollama_bench.api.app import RunManager, RunStatus, app, run_manager  # noqa: E402
-from ollama_bench.domain.events import Event, Events  # noqa: E402
-from ollama_bench.domain.models import (  # noqa: E402
+from local_ai_bench.api.app import RunManager, RunStatus, app, run_manager  # noqa: E402
+from local_ai_bench.domain.events import Event, Events  # noqa: E402
+from local_ai_bench.domain.models import (  # noqa: E402
     BenchmarkCase,
     CaseResult,
     Evaluation,
@@ -33,7 +33,7 @@ from ollama_bench.domain.models import (  # noqa: E402
     TimingMetrics,
     TokenMetrics,
 )
-from ollama_bench.storage.repository import BenchmarkRepository  # noqa: E402
+from local_ai_bench.storage.repository import BenchmarkRepository  # noqa: E402
 
 
 def _sample_run() -> RunResult:
@@ -508,7 +508,7 @@ def test_api_get_plugin_returns_source() -> None:
         plugin = body["plugin"]
         assert plugin["id"] == "smoke"
         assert plugin["name"]
-        assert plugin["source_file"]  # e.g. ollama_bench/plugins/builtin/smoke.py
+        assert plugin["source_file"]  # e.g. local_ai_bench/plugins/builtin/smoke.py
         assert "source" in plugin and plugin["source"]
         import base64
 

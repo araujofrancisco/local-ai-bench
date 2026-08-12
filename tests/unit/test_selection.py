@@ -1,7 +1,7 @@
 """Unit tests for model selection (glob filtering + interactive parsing)."""
 
-from ollama_bench.domain.models import ModelInfo
-from ollama_bench.selection import (
+from local_ai_bench.domain.models import ModelInfo
+from local_ai_bench.selection import (
     _resolve_indices,
     filter_models,
     matches_any,

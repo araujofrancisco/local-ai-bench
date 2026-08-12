@@ -1,7 +1,7 @@
 """Unit tests for Ollama metric mapping and discovery."""
 
-from ollama_bench.ollama.discovery import model_info_from_entry
-from ollama_bench.ollama.metrics import timing_from_done, tokens_from_done
+from local_ai_bench.ollama.discovery import model_info_from_entry
+from local_ai_bench.ollama.metrics import timing_from_done, tokens_from_done
 
 DONE = {
     "total_duration": 1_000_000_000,  # 1000 ms

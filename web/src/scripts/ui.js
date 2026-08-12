@@ -1,4 +1,4 @@
-// Shared UI helpers for OllamaBench pages: HTML escaping, toast notifications,
+// Shared UI helpers for LocalAIBench pages: HTML escaping, toast notifications,
 // and a promise-based confirmation modal. Imported by Astro page scripts and
 // bundled by Vite at build time.
 

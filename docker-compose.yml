@@ -1,3 +1,5 @@
+name: local-ai-bench
+
 services:
   app:
     build: .

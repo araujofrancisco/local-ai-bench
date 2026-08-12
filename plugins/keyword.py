@@ -1,7 +1,7 @@
 """Example local plugin: a simple keyword-presence benchmark.
 
 Drop additional `.py` files like this one into the directory named by
-`plugins.local_dir` in your config; `ollama-bench plugins list` picks them up
+`plugins.local_dir` in your config; `local-ai-bench plugins list` picks them up
 automatically with no changes to the core runner.
 """
 
@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from typing import Any, ClassVar
 
-from ollama_bench.domain.models import (
+from local_ai_bench.domain.models import (
     BenchmarkCase,
     BenchmarkCategory,
     CaseResult,
@@ -20,7 +20,7 @@ from ollama_bench.domain.models import (
     ModelResponse,
     PluginAggregate,
 )
-from ollama_bench.plugins.base import BenchmarkPlugin, RunContext
+from local_ai_bench.plugins.base import BenchmarkPlugin, RunContext
 
 _CASES = [
     {

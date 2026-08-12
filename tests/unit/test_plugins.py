@@ -2,16 +2,16 @@
 
 import base64
 
-from ollama_bench.domain.models import ModelResponse, TimingMetrics, TokenMetrics
-from ollama_bench.plugins import load_plugins
-from ollama_bench.plugins.base import RunContext
-from ollama_bench.plugins.registry import PluginRegistry
+from local_ai_bench.domain.models import ModelResponse, TimingMetrics, TokenMetrics
+from local_ai_bench.plugins import load_plugins
+from local_ai_bench.plugins.base import RunContext
+from local_ai_bench.plugins.registry import PluginRegistry
 
 VALID_PLUGIN = '''\
 from typing import Any, ClassVar
-from ollama_bench.plugins.base import BenchmarkPlugin
-from ollama_bench.domain.models import BenchmarkCase, BenchmarkCategory, Evaluation, Modality, ModelInfo, ModelResponse
-from ollama_bench.plugins.base import RunContext
+from local_ai_bench.plugins.base import BenchmarkPlugin
+from local_ai_bench.domain.models import BenchmarkCase, BenchmarkCategory, Evaluation, Modality, ModelInfo, ModelResponse
+from local_ai_bench.plugins.base import RunContext
 from collections.abc import Iterable
 
 class MyBench(BenchmarkPlugin):
@@ -68,7 +68,7 @@ def test_load_plugins_includes_builtins(tmp_path):
 
 def test_duplicate_plugin_id_rejected():
     reg = PluginRegistry()
-    from ollama_bench.plugins.builtin.smoke import SmokePlugin
+    from local_ai_bench.plugins.builtin.smoke import SmokePlugin
 
     reg.register(SmokePlugin)
     try:
@@ -95,7 +95,7 @@ def _first_case(plugin, ctx):
 
 
 async def test_coding_execute_code_false_is_static_only() -> None:
-    from ollama_bench.plugins.builtin.coding import CodingPlugin
+    from local_ai_bench.plugins.builtin.coding import CodingPlugin
 
     plugin = CodingPlugin()
     ctx = RunContext({"execute_code": False})
@@ -112,7 +112,7 @@ async def test_coding_execute_code_false_is_static_only() -> None:
 
 
 async def test_coding_execute_code_true_runs_tests() -> None:
-    from ollama_bench.plugins.builtin.coding import CodingPlugin
+    from local_ai_bench.plugins.builtin.coding import CodingPlugin
 
     plugin = CodingPlugin()
     ctx = RunContext({"execute_code": True, "timeout_seconds": 10})
@@ -128,7 +128,7 @@ async def test_coding_execute_code_true_runs_tests() -> None:
 
 
 async def test_coding_timeout_seconds_is_honored() -> None:
-    from ollama_bench.plugins.builtin.coding import CodingPlugin
+    from local_ai_bench.plugins.builtin.coding import CodingPlugin
 
     plugin = CodingPlugin()
     ctx = RunContext({"execute_code": True, "timeout_seconds": 1})
@@ -139,7 +139,7 @@ async def test_coding_timeout_seconds_is_honored() -> None:
 
 
 async def test_coding_execute_code_defaults_to_true() -> None:
-    from ollama_bench.plugins.builtin.coding import CodingPlugin
+    from local_ai_bench.plugins.builtin.coding import CodingPlugin
 
     plugin = CodingPlugin()
     ctx = RunContext({})
@@ -152,24 +152,30 @@ async def test_coding_execute_code_defaults_to_true() -> None:
     assert ev.passed is True
 
 
-def test_coding_dataset_v2_and_expanded_cases() -> None:
-    from ollama_bench.plugins.builtin.coding import CodingPlugin
+def test_coding_dataset_v3_and_expanded_cases() -> None:
+    from local_ai_bench.plugins.builtin.coding import CodingPlugin
 
-    assert CodingPlugin.dataset_version == "v2"
+    assert CodingPlugin.dataset_version == "v3"
     plugin = CodingPlugin()
     cases = list(plugin.cases(RunContext({})))
-    assert len(cases) >= 12
+    assert len(cases) >= 30
     ids = {c.id for c in cases}
     assert {
         "code_lru_cache_0011",
         "code_trie_0012",
         "code_edit_distance_0013",
         "code_n_queens_0014",
+        "code_two_sum_0006",
+        "code_has_cycle_0024",
+        "code_product_except_self_0028",
+        "code_parse_ints_0033",
+        "code_min_stack_0031",
+        "code_valid_bst_0032",
     } <= ids
 
 
 async def test_coding_class_based_solution_lru() -> None:
-    from ollama_bench.plugins.builtin.coding import CodingPlugin
+    from local_ai_bench.plugins.builtin.coding import CodingPlugin
 
     plugin = CodingPlugin()
     ctx = RunContext({"execute_code": True, "timeout_seconds": 15})
@@ -203,7 +209,7 @@ async def test_coding_class_based_solution_lru() -> None:
 
 
 async def test_coding_partial_credit_on_failed_assertions() -> None:
-    from ollama_bench.plugins.builtin.coding import CodingPlugin
+    from local_ai_bench.plugins.builtin.coding import CodingPlugin
 
     plugin = CodingPlugin()
     ctx = RunContext({"execute_code": True, "timeout_seconds": 15})
@@ -223,7 +229,7 @@ async def test_coding_partial_credit_on_failed_assertions() -> None:
 
 
 async def test_coding_extracts_fenced_code_from_prose() -> None:
-    from ollama_bench.plugins.builtin.coding import CodingPlugin
+    from local_ai_bench.plugins.builtin.coding import CodingPlugin
 
     plugin = CodingPlugin()
     ctx = RunContext({"execute_code": True, "timeout_seconds": 10})
@@ -233,7 +239,7 @@ async def test_coding_extracts_fenced_code_from_prose() -> None:
 
 
 def test_vision_max_image_dimension_caps_size() -> None:
-    from ollama_bench.plugins.builtin.vision import VisionPlugin
+    from local_ai_bench.plugins.builtin.vision import VisionPlugin
 
     plugin = VisionPlugin()
     small = _first_case(plugin, RunContext({"max_image_dimension": 8}))
@@ -249,7 +255,7 @@ def test_vision_max_image_dimension_caps_size() -> None:
 
 
 def test_coding_has_description() -> None:
-    from ollama_bench.plugins.builtin.coding import CodingPlugin
+    from local_ai_bench.plugins.builtin.coding import CodingPlugin
 
     assert CodingPlugin.description
     assert "description" in CodingPlugin.__dict__
@@ -259,7 +265,7 @@ def test_coding_has_description() -> None:
 
 
 def _multi_ctx(sizes=None, max_ctx=None, expected="paris", prompt="What is the capital of France?"):
-    from ollama_bench.plugins.builtin.multi_context import MultiContextPlugin
+    from local_ai_bench.plugins.builtin.multi_context import MultiContextPlugin
 
     plugin = MultiContextPlugin()
     opts: dict = {"expected": expected, "prompt": prompt, "contains": True}
@@ -271,7 +277,7 @@ def _multi_ctx(sizes=None, max_ctx=None, expected="paris", prompt="What is the c
 
 
 def test_multicontext_cases_cover_each_size_and_double_num_ctx() -> None:
-    from ollama_bench.domain.models import ModelInfo
+    from local_ai_bench.domain.models import ModelInfo
 
     plugin, ctx = _multi_ctx(sizes=[512, 1024, 4096])
     model = ModelInfo(host_name="h", model_name="m", max_context_tokens=None)
@@ -306,7 +312,7 @@ async def test_multicontext_evaluate_numeric_mode() -> None:
 
 
 def test_multicontext_aggregate_reports_per_context_score() -> None:
-    from ollama_bench.domain.models import (
+    from local_ai_bench.domain.models import (
         BenchmarkCase,
         CaseResult,
         Evaluation,

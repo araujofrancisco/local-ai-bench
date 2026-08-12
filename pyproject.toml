@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ollama-bench"
+name = "local-ai-bench"
 version = "0.1.0"
 description = "Local-first, plugin-based LLM benchmarking for Ollama hosts."
 readme = "README.md"
@@ -27,7 +27,7 @@ dev = [
 ]
 
 [project.scripts]
-ollama-bench = "ollama_bench.cli:app"
+local-ai-bench = "local_ai_bench.cli:app"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -45,7 +45,7 @@ ignore = ["E501"]
 python_version = "3.12"
 strict = true
 mypy_path = "src"
-exclude = ["tests/", "src/ollama_bench/plugins/builtin/", "web"]
+exclude = ["tests/", "src/local_ai_bench/plugins/builtin/", "web"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -1,6 +1,6 @@
 # Troubleshooting
 
-> First stop: `ollama-bench doctor` (CLI) or `GET /api/health` (web) — they
+> First stop: `local-ai-bench doctor` (CLI) or `GET /api/health` (web) — they
 > surface the most common problems (host reachability, model discovery, plugin
 > loading).
 
@@ -8,7 +8,7 @@
 
 ## Cannot connect to Ollama
 
-**Symptom:** dashboard shows "No models discovered" / the run page is empty; `ollama-bench models` errors.
+**Symptom:** dashboard shows "No models discovered" / the run page is empty; `local-ai-bench models` errors.
 
 Checks, in order:
 
@@ -85,7 +85,7 @@ separately (`cd web && npm install && npm run build`) and copy `web/dist`.
 - The registry rejects plugins with a **duplicate `id`** — check for an id
   clash with a built-in (e.g. don't name a local plugin `coding`).
 - Local plugins run under the same Python environment; an import error in the
-  file is reported (see `ollama-bench doctor` output) and the file is skipped.
+  file is reported (see `local-ai-bench doctor` output) and the file is skipped.
 
 ## Run status disappears after a container restart
 
@@ -104,13 +104,21 @@ so progress still shows — just less granular. Common causes:
 
 ## The coding plugin "executes code"
 
-With `coding.execute_code: true`, generated code is executed in a subprocess
-against the unit tests. This is inherent to a coding benchmark, but it does run
-model output as code:
+With `coding.execute_code: true` (the default), generated code is executed in
+a subprocess against the unit tests. This is inherent to a coding benchmark,
+but it does run model output as code:
 
-- It runs in a throwaway temp file with a timeout (`timeout_seconds`).
-- Prefer `execute_code: false` (the default) when benchmarking untrusted
-  models, or run the container in a sandboxed/isolated environment.
+- It runs in a throwaway temp file with a per-case timeout
+  (`timeout_seconds`), under `python -I` (isolated: no user site-packages, no
+  env overrides).
+- When `coding.enable_perf: true` (the default), cases that declare a `perf`
+  check additionally time the generated solution on a small and a large probe
+  (separate isolated subprocesses) to verify the intended time complexity — an
+  O(n^2) answer that passes the small assertions is still penalized.
+- Prefer `execute_code: false` (evaluation is then static only: syntax plus the
+  required function/class being defined) when benchmarking untrusted models,
+  or run the container in a sandboxed/isolated environment. Set `enable_perf:
+  false` to skip only the complexity checks while keeping the unit tests.
 
 ## Port conflicts
 
@@ -149,6 +157,6 @@ docker compose logs -f app
 Or reproduce with the CLI for clearer output:
 
 ```bash
-ollama-bench doctor
-ollama-bench run --models '<one-model>' --interactive
+local-ai-bench doctor
+local-ai-bench run --models '<one-model>' --interactive
 ```

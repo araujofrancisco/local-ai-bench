@@ -5,15 +5,15 @@ from typing import Any
 
 import httpx
 
-from ollama_bench.config import BenchmarkConfig, RunnerConfig
-from ollama_bench.domain.models import (
+from local_ai_bench.config import BenchmarkConfig, RunnerConfig
+from local_ai_bench.domain.models import (
     BenchmarkCase,
     ModelInfo,
     ModelResponse,
     TimingMetrics,
     TokenMetrics,
 )
-from ollama_bench.runner.orchestrator import (
+from local_ai_bench.runner.orchestrator import (
     RunOrchestrator,
     _nearest_rank,
     _pct,
@@ -89,7 +89,7 @@ def test_orchestrator_plugin_options_overrides() -> None:
 
 
 def test_orchestrator_plugin_options_defaults_to_config() -> None:
-    from ollama_bench.config import PluginConfig
+    from local_ai_bench.config import PluginConfig
 
     cfg = BenchmarkConfig(
         hosts=[], plugins=PluginConfig(options={"coding": {"timeout_seconds": 7}})
@@ -187,8 +187,8 @@ async def test_send_still_attempts_once_when_max_retries_is_zero():
 
 # --- Weighted overall scoring ---
 
-from ollama_bench.domain.models import BenchmarkCategory  # noqa: E402
-from ollama_bench.runner.orchestrator import _category_weight, _weighted_mean  # noqa: E402
+from local_ai_bench.domain.models import BenchmarkCategory  # noqa: E402
+from local_ai_bench.runner.orchestrator import _category_weight, _weighted_mean  # noqa: E402
 
 
 def test_weighted_mean_plain():

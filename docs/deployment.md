@@ -1,6 +1,6 @@
 # Deployment
 
-OllamaBench runs as a **single container** that serves both the compiled Astro
+LocalAIBench runs as a **single container** that serves both the compiled Astro
 frontend and the FastAPI backend. SQLite is stored on a volume so results
 survive restarts.
 
@@ -17,8 +17,8 @@ survive restarts.
 ## Quick start
 
 ```bash
-git clone <repo-url> ollama-bench
-cd ollama-bench
+git clone <repo-url> local-ai-bench
+cd local-ai-bench
 docker compose up -d --build
 ```
 
@@ -157,7 +157,7 @@ Backend (Python ≥ 3.12):
 python -m venv .venv
 . .venv/bin/activate
 pip install -e ".[dev]"
-uvicorn ollama_bench.api.app:app --reload --host 0.0.0.0 --port 8000
+uvicorn local_ai_bench.api.app:app --reload --host 0.0.0.0 --port 8000
 ```
 
 Frontend (Astro):
@@ -175,7 +175,7 @@ points at a built frontend. Use `npm run build` and set
 `STATIC_DIR=web/dist` to serve the UI from FastAPI locally:
 
 ```bash
-STATIC_DIR=web/dist uvicorn ollama_bench.api.app:app --host 0.0.0.0 --port 8000
+STATIC_DIR=web/dist uvicorn local_ai_bench.api.app:app --host 0.0.0.0 --port 8000
 ```
 
 ### Tests

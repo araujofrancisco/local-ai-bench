@@ -9,12 +9,12 @@ from __future__ import annotations
 import asyncio
 import json
 
-from ollama_bench.config import BenchmarkConfig
-from ollama_bench.domain.models import HostConfig
-from ollama_bench.plugins.builtin.smoke import SmokePlugin
-from ollama_bench.reporting.repository import write_report
-from ollama_bench.runner.orchestrator import RunOrchestrator
-from ollama_bench.storage.repository import BenchmarkRepository
+from local_ai_bench.config import BenchmarkConfig
+from local_ai_bench.domain.models import HostConfig
+from local_ai_bench.plugins.builtin.smoke import SmokePlugin
+from local_ai_bench.reporting.repository import write_report
+from local_ai_bench.runner.orchestrator import RunOrchestrator
+from local_ai_bench.storage.repository import BenchmarkRepository
 from tests.fixtures.mock_ollama import mock_transport
 
 

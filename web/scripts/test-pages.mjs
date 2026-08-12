@@ -187,9 +187,9 @@ const results = await Promise.all([
   loadPage('compare/index.html', 'http://localhost:8000/compare/?run=r1'),
   loadPage('compare/index.html', 'http://localhost:8000/compare/?run=r1&run=r2'),
   loadPage('run/index.html', 'http://localhost:8000/run/'),
-  loadPage('run/index.html', 'http://localhost:8000/run/', { storage: { 'ollama-bench.active-run': 'running1' } }),
-  loadPage('run/index.html', 'http://localhost:8000/run/', { storage: { 'ollama-bench.active-run': 'done1' } }),
-  loadPage('run/index.html', 'http://localhost:8000/run/', { storage: { 'ollama-bench.active-run': 'gone1' } }),
+  loadPage('run/index.html', 'http://localhost:8000/run/', { storage: { 'local-ai-bench.active-run': 'running1' } }),
+  loadPage('run/index.html', 'http://localhost:8000/run/', { storage: { 'local-ai-bench.active-run': 'done1' } }),
+  loadPage('run/index.html', 'http://localhost:8000/run/', { storage: { 'local-ai-bench.active-run': 'gone1' } }),
   loadPage('run/index.html', 'http://localhost:8000/run/?run=running1'),
 ]);
 await wait(150);
@@ -247,7 +247,7 @@ assert('resume: running -> progress visible', d8.getElementById('progress').styl
 assert('resume: running -> poller scheduled', d8.defaultView.__intervals.length >= 1);
 assert('resume: completed -> result shown', d9.getElementById('results').textContent.includes('Benchmark completed'));
 assert('resume: unknown -> form visible', d10.getElementById('benchmark-form').style.display === 'block');
-assert('resume: unknown -> key cleared', d10.defaultView.localStorage.getItem('ollama-bench.active-run') === null);
+assert('resume: unknown -> key cleared', d10.defaultView.localStorage.getItem('local-ai-bench.active-run') === null);
 
 assert('resume from ?run=: progress visible', d11.getElementById('progress').style.display === 'block');
 assert('resume from ?run=: poller scheduled', d11.defaultView.__intervals.length >= 1);

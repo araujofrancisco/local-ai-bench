@@ -2,18 +2,18 @@
 
 ## 1. Project Name
 
-Working name: **OllamaBench**
+Working name: **LocalAIBench**
 
 Alternative names if desired:
 
-- `ollama-bench`
+- `local-ai-bench`
 - `local-llm-bench`
 - `lan-llm-eval`
 
 The final CLI command should be simple:
 
 ```bash
-ollama-bench
+local-ai-bench
 ```
 
 ---
@@ -140,15 +140,15 @@ A team lead or architect who wants reproducible benchmark reports to choose a mo
 The CLI should provide:
 
 ```bash
-ollama-bench init
-ollama-bench doctor
-ollama-bench models
-ollama-bench plugins list
-ollama-bench run
-ollama-bench run --config config.yaml
-ollama-bench report list
-ollama-bench report view latest
-ollama-bench report open latest
+local-ai-bench init
+local-ai-bench doctor
+local-ai-bench models
+local-ai-bench plugins list
+local-ai-bench run
+local-ai-bench run --config config.yaml
+local-ai-bench report list
+local-ai-bench report view latest
+local-ai-bench report open latest
 ```
 
 ### 6.2 `init`
@@ -242,7 +242,7 @@ If no hosts are configured:
 
 ```text
 No Ollama hosts configured.
-Add hosts to config.yaml or run: ollama-bench init
+Add hosts to config.yaml or run: local-ai-bench init
 ```
 
 If no models are found:
@@ -256,7 +256,7 @@ If no reports exist:
 
 ```text
 No benchmark reports found.
-Run your first benchmark with: ollama-bench run
+Run your first benchmark with: local-ai-bench run
 ```
 
 ---
@@ -341,7 +341,7 @@ Run your first benchmark with: ollama-bench run
 
 ## 9. Module Responsibilities
 
-### 9.1 `ollama_bench.config`
+### 9.1 `local_ai_bench.config`
 
 Responsible for:
 
@@ -350,7 +350,7 @@ Responsible for:
 - Resolving enabled hosts, models, plugins, and options.
 - Computing config hash for reproducibility.
 
-### 9.2 `ollama_bench.ollama`
+### 9.2 `local_ai_bench.ollama`
 
 Responsible for:
 
@@ -362,7 +362,7 @@ Responsible for:
 - Measuring timing metrics.
 - Mapping Ollama-specific errors.
 
-### 9.3 `ollama_bench.plugins`
+### 9.3 `local_ai_bench.plugins`
 
 Responsible for:
 
@@ -372,7 +372,7 @@ Responsible for:
 - Discovering installed entry-point plugins.
 - Validating plugin metadata.
 
-### 9.4 `ollama_bench.runner`
+### 9.4 `local_ai_bench.runner`
 
 Responsible for:
 
@@ -383,7 +383,7 @@ Responsible for:
 - Collecting case results.
 - Handling partial failures.
 
-### 9.5 `ollama_bench.context`
+### 9.5 `local_ai_bench.context`
 
 Responsible for:
 
@@ -392,7 +392,7 @@ Responsible for:
 - Estimating optimal context window.
 - Recording context-quality curves.
 
-### 9.6 `ollama_bench.reporting`
+### 9.6 `local_ai_bench.reporting`
 
 Responsible for:
 
@@ -402,7 +402,7 @@ Responsible for:
 - Rendering warnings and skipped cases.
 - Preserving raw artifacts.
 
-### 9.7 `ollama_bench.cli`
+### 9.7 `local_ai_bench.cli`
 
 Responsible for:
 
@@ -416,7 +416,7 @@ Responsible for:
 ## 10. Repository Structure
 
 ```text
-ollama-bench/
+local-ai-bench/
 ├── PLAN.md
 ├── README.md
 ├── pyproject.toml
@@ -434,7 +434,7 @@ ollama-bench/
 │   └── example_plugin.py
 ├── reports/
 ├── src/
-│   └── ollama_bench/
+│   └── local_ai_bench/
 │       ├── __init__.py
 │       ├── cli.py
 │       ├── config.py
@@ -497,7 +497,7 @@ The configuration file should be simple, explicit, and validated.
 
 ```yaml
 app:
-  name: OllamaBench
+  name: LocalAIBench
   output_dir: ./reports
   log_level: info
 
@@ -886,12 +886,12 @@ This keeps the base interface small.
 
 Support three discovery mechanisms:
 
-1. Built-in plugins inside `ollama_bench.plugins.builtin`.
+1. Built-in plugins inside `local_ai_bench.plugins.builtin`.
 2. Local plugins in `./plugins/*.py`.
 3. Installed plugins via Python entry points:
 
 ```toml
-[project.entry-points."ollama_bench.plugins"]
+[project.entry-points."local_ai_bench.plugins"]
 my_benchmark = "my_package.plugin:MyBenchmarkPlugin"
 ```
 
@@ -1544,7 +1544,7 @@ Example:
 
 ```text
 reports/
-└── 2026-06-16T14-30-00_ollama-bench/
+└── 2026-06-16T14-30-00_local-ai-bench/
     ├── report.json
     ├── report.md
     ├── index.html
@@ -1824,7 +1824,7 @@ If enabled:
 CLI flag:
 
 ```bash
-ollama-bench run --unsafe-execute-code
+local-ai-bench run --unsafe-execute-code
 ```
 
 ### 21.3 Report sanitization
@@ -1912,7 +1912,7 @@ Each built-in plugin should have:
 Use tiny fake models and small datasets to run:
 
 ```bash
-ollama-bench run --config tests/fixtures/config.yaml
+local-ai-bench run --config tests/fixtures/config.yaml
 ```
 
 Assert:
@@ -1967,7 +1967,7 @@ Extras added beyond the v1 plan:
   live in the UI).
 - Recommended default config is now zero-config for new users: `hosts` is
   omitted (falls back to local `127.0.0.1:11434` or `$OLLAMA_HOST`), `local_dir`
-  is `./plugins` (Docker mounts it at `/app/plugins`), and `ollama-bench init`
+  is `./plugins` (Docker mounts it at `/app/plugins`), and `local-ai-bench init`
   writes this working starter config.
 - E2E integration tests added (mock Ollama via `httpx.MockTransport`): a full
   discovery → run → report → SQLite-persist path. This surfaced and fixed a
@@ -1991,7 +1991,7 @@ Tasks:
 Acceptance criteria:
 
 ```bash
-ollama-bench --help
+local-ai-bench --help
 ```
 
 works.
@@ -2049,7 +2049,7 @@ Acceptance criteria:
 - Adding a new local plugin file makes it visible in:
 
 ```bash
-ollama-bench plugins list
+local-ai-bench plugins list
 ```
 
 without modifying core runner.
@@ -2181,9 +2181,9 @@ Acceptance criteria:
 
 The project is done when:
 
-1. `ollama-bench init` creates a working config.
-2. `ollama-bench doctor` validates environment.
-3. `ollama-bench run` benchmarks configured models.
+1. `local-ai-bench init` creates a working config.
+2. `local-ai-bench doctor` validates environment.
+3. `local-ai-bench run` benchmarks configured models.
 4. Built-in plugins run successfully where supported.
 5. Unsupported model/plugin combinations are skipped cleanly.
 6. Context-window optimization produces a recommendation.
@@ -2219,7 +2219,7 @@ The plugin should only need to define:
 Then:
 
 ```bash
-ollama-bench plugins list
+local-ai-bench plugins list
 ```
 
 should show it.

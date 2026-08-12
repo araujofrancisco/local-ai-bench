@@ -1,8 +1,8 @@
 # Usage
 
-OllamaBench has two interfaces:
+LocalAIBench has two interfaces:
 
-- **CLI** (`ollama-bench`) — run benchmarks from the terminal, generate reports, inspect history.
+- **CLI** (`local-ai-bench`) — run benchmarks from the terminal, generate reports, inspect history.
 - **Web UI** — dashboard, run/compare/history/plugins pages served by the FastAPI backend.
 
 Both use the same configuration file and the same SQLite results database.
@@ -14,7 +14,7 @@ Both use the same configuration file and the same SQLite results database.
 Install the package (see [deployment](deployment.md)), then:
 
 ```bash
-ollama-bench --help
+local-ai-bench --help
 ```
 
 ### `init`
@@ -22,7 +22,7 @@ ollama-bench --help
 Write a starter `config.yaml` into the current directory.
 
 ```bash
-ollama-bench init --config config.yaml
+local-ai-bench init --config config.yaml
 ```
 
 ### `doctor`
@@ -31,7 +31,7 @@ Validate the configuration, host reachability, model discovery, output
 directory, and plugin loading. Run this first when something is wrong.
 
 ```bash
-ollama-bench doctor
+local-ai-bench doctor
 ```
 
 ### `models`
@@ -39,7 +39,7 @@ ollama-bench doctor
 List models discovered on the configured hosts.
 
 ```bash
-ollama-bench models
+local-ai-bench models
 ```
 
 ### `plugins`
@@ -47,7 +47,7 @@ ollama-bench models
 List the benchmark plugins that are available (built-in + local).
 
 ```bash
-ollama-bench plugins
+local-ai-bench plugins
 ```
 
 ### `run`
@@ -56,12 +56,12 @@ Run a benchmark against the configured hosts with the enabled plugins. Models
 are auto-discovered; select them with flags:
 
 ```bash
-ollama-bench run                                 # all discovered models
-ollama-bench run --models 'qwen*'                # glob match
-ollama-bench run --models llama3.2:latest,qwen2.5-coder:14b
-ollama-bench run --exclude '*:0.8b'              # skip some models
-ollama-bench run --interactive                   # pick interactively
-ollama-bench run --db benchmark.db               # save results to SQLite
+local-ai-bench run                                 # all discovered models
+local-ai-bench run --models 'qwen*'                # glob match
+local-ai-bench run --models llama3.2:latest,qwen2.5-coder:14b
+local-ai-bench run --exclude '*:0.8b'              # skip some models
+local-ai-bench run --interactive                   # pick interactively
+local-ai-bench run --db benchmark.db               # save results to SQLite
 ```
 
 ### `run-single`
@@ -70,7 +70,7 @@ Run **all enabled plugins** for a single model and save results to SQLite and
 files. Useful for deep-diving one model.
 
 ```bash
-ollama-bench run-single --db benchmark.db
+local-ai-bench run-single --db benchmark.db
 ```
 
 ### `report`
@@ -79,8 +79,8 @@ List, view, or open generated reports (JSON / Markdown / HTML per the
 `reporting.formats` config).
 
 ```bash
-ollama-bench report               # newest run
-ollama-bench report --run <run_id>
+local-ai-bench report               # newest run
+local-ai-bench report --run <run_id>
 ```
 
 ### `history`
@@ -88,8 +88,8 @@ ollama-bench report --run <run_id>
 Show benchmark history from SQLite.
 
 ```bash
-ollama-bench history --db benchmark.db
-ollama-bench history --db benchmark.db --model llama3.2:latest
+local-ai-bench history --db benchmark.db
+local-ai-bench history --db benchmark.db --model llama3.2:latest
 ```
 
 ### `compare`
@@ -97,8 +97,8 @@ ollama-bench history --db benchmark.db --model llama3.2:latest
 Compare all models across runs (optionally limited to one run).
 
 ```bash
-ollama-bench compare --db benchmark.db
-ollama-bench compare --db benchmark.db --run <run_id>
+local-ai-bench compare --db benchmark.db
+local-ai-bench compare --db benchmark.db --run <run_id>
 ```
 
 ### `version`
@@ -208,25 +208,25 @@ resets all option overrides.
 
 #### Plugin options that affect behavior
 
-| Plugin | Option | Default | Effect |
-| --- | --- | --- | --- |
-| `coding` | `execute_code` | `false` | When `true`, generated code is actually executed in a subprocess against the unit tests. When `false`, evaluation is static only (syntax + function-defined). |
-| `coding` | `timeout_seconds` | `30` | Subprocess timeout used when `execute_code` is enabled. |
-| `vision` | `max_image_dimension` | `768` | Caps the size of the synthetic checkerboard image sent to the model. |
-
-Any local plugin can read these per-run values from `ctx.options`.
+Per-plugin option defaults and their effects are documented in
+[plugins.md](plugins.md). Only `coding` and `vision`/`multi_context` currently
+read options; local plugins can read any value from `ctx.options`.
 
 ---
 
 ## Writing a local plugin
 
+This section is a quick overview; see the full
+[plugins.md](plugins.md) guide for the complete template and authoring
+guidelines.
+
 Drop a `.py` file into the directory named by `plugins.local_dir` (default
-`./plugins`) and it is picked up automatically — no core changes required.
-Each file should define a class subclassing `BenchmarkPlugin`:
+`./plugins`) and it is picked up automatically — no core changes required. Each
+file defines a class subclassing `BenchmarkPlugin`:
 
 ```python
-from ollama_bench.plugins.base import BenchmarkPlugin, RunContext
-from ollama_bench.domain.models import (
+from local_ai_bench.plugins.base import BenchmarkPlugin, RunContext
+from local_ai_bench.domain.models import (
     BenchmarkCase, Evaluation, ModelInfo, ModelResponse,
 )
 

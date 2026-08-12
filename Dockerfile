@@ -43,4 +43,4 @@ COPY --from=builder /app/dist /app/static
 EXPOSE 8000
 
 # Default command runs the FastAPI app
-CMD ["uvicorn", "ollama_bench.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info"]
+CMD ["uvicorn", "local_ai_bench.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info"]
