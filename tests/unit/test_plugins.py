@@ -855,3 +855,180 @@ def test_classification_registered_as_builtin() -> None:
     registry = PluginRegistry()
     load_builtin_plugins(registry)
     assert "classification" in registry.ids()
+
+
+# --- Agent tool-use plugin ---
+
+
+def _agent_ctx():
+    from local_ai_bench.plugins.builtin.agent_tool_use import AgentToolUsePlugin
+
+    return AgentToolUsePlugin(), RunContext()
+
+
+def _agent_case(plugin, ctx, case_id):
+    return next(c for c in plugin.cases(ctx) if c.id == case_id)
+
+
+def test_agent_tool_use_requires_tools_capability() -> None:
+    from local_ai_bench.domain.models import ModelInfo
+
+    plugin, _ = _agent_ctx()
+    assert plugin.supports_model(ModelInfo(host_name="h", model_name="m", supports_tools=False)) is False
+    assert plugin.supports_model(ModelInfo(host_name="h", model_name="m", supports_tools=True)) is True
+
+
+def test_agent_tool_use_build_request_has_flat_tools_schema() -> None:
+    """Regression: the tools list was double-wrapped, breaking every case."""
+    plugin, ctx = _agent_ctx()
+    case = _agent_case(plugin, ctx, "agent_weather_0001")
+    req = plugin.turn_request(case, None, ctx, [])
+    names = [t["function"]["name"] for t in req["tools"]]
+    assert names == ["get_weather"]
+
+
+def test_agent_tool_use_turn_request_injects_tool_results() -> None:
+    plugin, ctx = _agent_ctx()
+    case = _agent_case(plugin, ctx, "agent_math_0002")
+    transcript = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "calculate",
+                        "arguments": {"expression": "(15 * 24) + (360 / 12)"},
+                    }
+                }
+            ],
+        }
+    ]
+    req = plugin.turn_request(case, None, ctx, transcript)
+    roles = [m["role"] for m in req["messages"]]
+    # The tool result ends the turn; there are no further user prompts for this
+    # single-prompt case, so no trailing user message is appended.
+    assert roles == ["user", "assistant", "tool"]
+    tool_msg = req["messages"][2]
+    assert tool_msg["role"] == "tool"
+    assert "Result: 390.0" in tool_msg["content"]
+
+
+def test_agent_tool_use_parses_json_string_arguments() -> None:
+    from local_ai_bench.plugins.builtin.agent_tool_use import _parse_arguments
+
+    assert _parse_arguments({"city": "Paris"}) == {"city": "Paris"}
+    assert _parse_arguments('{"city": "Paris"}') == {"city": "Paris"}
+    assert _parse_arguments("not-json") == {}
+    assert _parse_arguments(None) == {}
+
+
+async def test_agent_tool_use_correct_loop_scores_full() -> None:
+    plugin, ctx = _agent_ctx()
+    case = _agent_case(plugin, ctx, "agent_math_0002")
+    ctx.transcript = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "calculate",
+                        "arguments": {"expression": "(15 * 24) + (360 / 12)"},
+                    }
+                }
+            ],
+        },
+        {"role": "assistant", "content": "The result is 420.", "tool_calls": None},
+    ]
+    ev = await plugin.evaluate(case, _resp("The result is 420."), ctx)
+    assert ev.score == 1.0
+    assert ev.passed is True
+    assert ev.metrics["tool_orchestration_score"] == 1.0
+    assert ev.metrics["answer_score"] == 1.0
+
+
+async def test_agent_tool_use_no_tool_call_scores_zero() -> None:
+    plugin, ctx = _agent_ctx()
+    case = _agent_case(plugin, ctx, "agent_weather_0001")
+    ctx.transcript = [{"role": "assistant", "content": "It is warm.", "tool_calls": None}]
+    ev = await plugin.evaluate(case, _resp("It is warm."), ctx)
+    assert ev.score == 0.0
+    assert ev.passed is False
+
+
+def test_agent_tool_use_safe_calculate_rejects_code() -> None:
+    from local_ai_bench.plugins.builtin.agent_tool_use import _safe_calculate
+
+    assert _safe_calculate("1 + 2 * 3") == 7.0
+    assert _safe_calculate("(15 * 24) + (360 / 12)") == 390.0
+    assert _safe_calculate("-4 ** 2") == -16.0
+    with pytest.raises(ValueError):
+        _safe_calculate("__import__('os').system('id')")
+    with pytest.raises(ValueError):
+        _safe_calculate("open('/etc/passwd')")
+
+
+def test_agent_tool_use_registered_as_builtin() -> None:
+    from local_ai_bench.plugins.builtin import load_builtin_plugins
+
+    registry = PluginRegistry()
+    load_builtin_plugins(registry)
+    assert "agent_tool_use" in registry.ids()
+
+
+# --- Multi-turn conversation plugin ---
+
+
+def _mt_ctx():
+    from local_ai_bench.plugins.builtin.multi_turn import MultiTurnPlugin
+
+    return MultiTurnPlugin(), RunContext()
+
+
+def test_multi_turn_turn_request_forwards_full_history() -> None:
+    plugin, ctx = _mt_ctx()
+    case = next(c for c in plugin.cases(ctx) if c.id == "mt_secret_token_0001")
+    transcript = [
+        {"role": "assistant", "content": "Sure, I will remember."},
+        {"role": "assistant", "content": "KILO-7"},
+    ]
+    req = plugin.turn_request(case, None, ctx, transcript)
+    roles = [m["role"] for m in req["messages"]]
+    assert roles == ["user", "assistant", "user", "assistant", "user"]
+    prompts = [m["content"] for m in req["messages"] if m["role"] == "user"]
+    assert prompts == case.input["turns"]
+
+
+async def test_multi_turn_evaluate_perfect_transcript() -> None:
+    plugin, ctx = _mt_ctx()
+    case = next(c for c in plugin.cases(ctx) if c.id == "mt_secret_token_0001")
+    ctx.transcript = [
+        {"content": "OK, noted."},
+        {"content": "KILO-7"},
+        {"content": "KILO-7"},
+    ]
+    ev = await plugin.evaluate(case, _resp("KILO-7"), ctx)
+    assert ev.score == 1.0
+    assert ev.passed is True
+
+
+async def test_multi_turn_evaluate_missed_token() -> None:
+    plugin, ctx = _mt_ctx()
+    case = next(c for c in plugin.cases(ctx) if c.id == "mt_secret_token_0001")
+    ctx.transcript = [
+        {"content": "OK."},
+        {"content": "I forgot."},
+        {"content": "I forgot."},
+    ]
+    ev = await plugin.evaluate(case, _resp("I forgot."), ctx)
+    assert ev.score == 0.0
+    assert ev.passed is False
+
+
+def test_multi_turn_registered_as_builtin() -> None:
+    from local_ai_bench.plugins.builtin import load_builtin_plugins
+
+    registry = PluginRegistry()
+    load_builtin_plugins(registry)
+    assert "multi_turn" in registry.ids()

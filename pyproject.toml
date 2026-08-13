@@ -45,7 +45,16 @@ ignore = ["E501"]
 python_version = "3.12"
 strict = true
 mypy_path = "src"
-exclude = ["tests/", "src/local_ai_bench/plugins/builtin/", "web"]
+exclude = ["tests/", "web"]
+
+# Built-in plugins are data-heavy benchmark definitions (heterogeneous case
+# dicts, unannotated overrides). The `exclude` above cannot skip them because
+# they are *imported* by the typed registry, so use a per-module override to
+# keep them out of strict checking. They are covered behaviourally by unit
+# tests instead (tests/unit/test_plugins.py, test_coding.py, test_runner.py).
+[[tool.mypy.overrides]]
+module = "local_ai_bench.plugins.builtin.*"
+ignore_errors = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

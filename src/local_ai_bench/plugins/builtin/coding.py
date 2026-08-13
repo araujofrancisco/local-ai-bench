@@ -158,7 +158,7 @@ _CASES = [
                 "name": "two_sum_linear",
                 "small": "two_sum(list(range(20000)), 19597)",
                 "large": "two_sum(list(range(80000)), 79597)",
-                "ratio": 6.0,
+                "ratio": 8.0,
             }
         ],
     },
@@ -637,9 +637,9 @@ _CASES = [
         "perf": [
             {
                 "name": "product_except_self_linear",
-                "small": "product_except_self([1]*2000)",
-                "large": "product_except_self([1]*8000)",
-                "ratio": 6.0,
+                "small": "product_except_self([1]*4000)",
+                "large": "product_except_self([1]*16000)",
+                "ratio": 8.0,
             }
         ],
     },
@@ -1047,9 +1047,12 @@ def _build_perf_snippet(harness: str, source: str, check: dict[str, Any]) -> str
     """Harness that times the solution on a small and a large probe.
 
     Scaling is measured relative (``large_ms / small_ms``) inside one isolated
-    subprocess, so machine speed does not matter. Correctness is enforced
-    separately by the case's executable assertions; ``eval`` here only ever
-    evaluates the case's own literal probe expressions — never model output.
+    subprocess, so machine speed does not matter. Fast probes are repeated and
+    the minimum kept (best-of-N) since background noise can only inflate a
+    measurement; slow probes (e.g. a quadratic solution on the large input) run
+    once so the check stays bounded. Correctness is enforced separately by the
+    case's executable assertions; ``eval`` here only ever evaluates the case's
+    own literal probe expressions — never model output.
     """
     small = check["small"]
     large = check["large"]
@@ -1065,11 +1068,18 @@ def _time_once(expr):
     eval(expr)
     return (time.perf_counter() - t0) * 1000.0
 
-# warmup each size once, then measure once with the working set loaded
-_time_once({small!r})
-_time_once({large!r})
-s_ms = _time_once({small!r})
-l_ms = _time_once({large!r})
+def _measure(expr, threshold_ms=50.0, extra=2):
+    # warmup the working set, then measure once; repeat only fast probes so
+    # sub-millisecond timings are stable without ballooning slow ones
+    # (a quadratic solution on the large input can take seconds).
+    _time_once(expr)
+    best = _time_once(expr)
+    if best < threshold_ms:
+        best = min(best, *(_time_once(expr) for _ in range(extra)))
+    return best
+
+s_ms = _measure({small!r})
+l_ms = _measure({large!r})
 print("__PERF__" + json.dumps({{"small_ms": s_ms, "large_ms": l_ms}}))
 """
 
@@ -1078,20 +1088,22 @@ def _run_perf_check(
     harness: str,
     source: str,
     check: dict[str, Any],
-    timeout: int,
+    timeout: float,
     options: dict[str, Any] | None,
 ) -> tuple[bool, float | None]:
     """Run the scale check. Returns ``(passed, measured_large_over_small)``."""
-    ratio = float(check.get("ratio", (options or {}).get("perf_ratio_default", 6.0)))
+    ratio = float(check.get("ratio", (options or {}).get("perf_ratio_default", 8.0)))
     snippet = _build_perf_snippet(harness, source, check)
-    ok, out = _run_test_snippet(snippet, int(timeout))
+    ok, out = _run_test_snippet(snippet, timeout)
     if not ok:
         return False, None
     data = _parse_perf_output(out)
     if not data:
         return False, None
-    small_ms = max(float(data["small_ms"]), 1.0)
-    large_ms = max(float(data["large_ms"]), 1.0)
+    # Best-of-N timings can still land below 1ms for tiny probes; floor both
+    # sides at 1us so a fast small probe cannot inflate the ratio.
+    small_ms = max(float(data["small_ms"]), 0.001)
+    large_ms = max(float(data["large_ms"]), 0.001)
     measured = large_ms / small_ms
     return measured <= ratio, round(measured, 2)
 
@@ -1108,7 +1120,7 @@ def _parse_perf_output(out: str) -> dict[str, Any] | None:
     return None
 
 
-def _run_test_snippet(snippet: str, timeout: int = 30) -> tuple[bool, str]:
+def _run_test_snippet(snippet: str, timeout: float = 30) -> tuple[bool, str]:
     """Execute a tiny Python snippet in an isolated subprocess.
 
     Returns ``(ok, stderr_tail)``; ``ok`` is True when the process exits cleanly.

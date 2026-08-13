@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 import json
 
+import httpx
+
 from local_ai_bench.config import BenchmarkConfig
 from local_ai_bench.domain.events import Event, Events
 from local_ai_bench.domain.models import HostConfig
@@ -118,3 +120,105 @@ def test_function_calling_stream_captures_tool_calls() -> None:
     weather = next(cr for cr in m.cases if cr.case.id == "fc_weather_0001")
     assert (weather.response.tool_calls or [])[0]["function"]["name"] == "get_weather"
     assert weather.evaluation.score == 1.0
+
+
+def _recording_transport(recorded: list[dict]) -> httpx.MockTransport:
+    """Mock transport that records every /api/chat payload before serving it."""
+    inner = mock_transport()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/chat":
+            recorded.append(json.loads(request.content or b"{}"))
+        return inner.handler(request)
+
+    return httpx.MockTransport(handler)
+
+
+def test_multi_turn_forwards_history_to_ollama() -> None:
+    """Each turn's request must include the full conversation so the model can
+    actually recall earlier turns (regression: only the current prompt was sent)."""
+    from local_ai_bench.plugins.builtin.multi_turn import MultiTurnPlugin
+
+    recorded: list[dict] = []
+    cfg = BenchmarkConfig(
+        hosts=[HostConfig(name="mock", base_url="http://mock.ollama")],
+        runner={"repetitions": 1, "warmup_runs": 0, "max_retries": 0},
+    )
+    orch = RunOrchestrator(
+        cfg,
+        plugins=[MultiTurnPlugin()],
+        run_id="e2e-mt",
+        client_transport=_recording_transport(recorded),
+    )
+    result = asyncio.run(orch.run())
+
+    assert result.errors == []
+    assert recorded, "expected at least one /api/chat call"
+    second = recorded[1]
+    roles = [m["role"] for m in second["messages"]]
+    assert roles == ["user", "assistant", "user"], second["messages"]
+    assert "KILO-7" in second["messages"][0]["content"]  # turn 0 prompt resent
+    assert "token" in second["messages"][2]["content"]  # turn 1 prompt
+
+
+def test_agent_tool_use_end_to_end_loop() -> None:
+    """The agent loop calls a tool, sees its result, and then answers."""
+    from local_ai_bench.plugins.builtin.agent_tool_use import AgentToolUsePlugin
+
+    recorded: list[dict] = []
+
+    def agent_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/chat":
+            payload = json.loads(request.content or b"{}")
+            recorded.append(payload)
+            # Turn 0 (no tool result yet): call the calculate tool.
+            # Turn 1 (tool result visible): answer.
+            if any(m.get("role") == "tool" for m in payload.get("messages", [])):
+                body = {"message": {"role": "assistant", "content": "The result is 420."}, "done": False}
+                done = {"done": True, "done_reason": "stop", "total_duration": 500_000_000, "eval_count": 5, "eval_duration": 100_000_000}
+            else:
+                body = {
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "function": {
+                                    "name": "calculate",
+                                    "arguments": {"expression": "(15 * 24) + (360 / 12)"},
+                                }
+                            }
+                        ],
+                    },
+                    "done": False,
+                }
+                done = {"done": True, "done_reason": "tool_calls", "total_duration": 500_000_000, "eval_count": 5, "eval_duration": 100_000_000}
+            lines = [json.dumps(body), json.dumps(done)]
+            return httpx.Response(200, content="\n".join(lines) + "\n", headers={"content-type": "application/x-ndjson"})
+        return mock_transport().handler(request)
+
+    cfg = BenchmarkConfig(
+        hosts=[HostConfig(name="mock", base_url="http://mock.ollama")],
+        runner={"repetitions": 1, "warmup_runs": 0, "max_retries": 0},
+    )
+    orch = RunOrchestrator(
+        cfg,
+        plugins=[AgentToolUsePlugin()],
+        run_id="e2e-agent",
+        client_transport=httpx.MockTransport(agent_handler),
+    )
+    result = asyncio.run(orch.run())
+
+    assert result.errors == []
+    # Tool results must be fed back to the model in a later request.
+    result_payloads = [p for p in recorded if any(m.get("role") == "tool" for m in p["messages"])]
+    assert result_payloads, "expected a request that carries a tool result"
+    second = result_payloads[0]
+    assert "Result: 390.0" in next(m["content"] for m in second["messages"] if m.get("role") == "tool")
+    # The full conversation is forwarded: user prompt + assistant tool_calls + tool result.
+    assert second["messages"][0]["role"] == "user"
+    assert second["messages"][1]["role"] == "assistant"
+    # The agent_math case scores a perfect loop (correct tool + correct answer).
+    math = next(cr for cr in result.models[0].cases if cr.case.id == "agent_math_0002")
+    assert math.evaluation.score == 1.0
+    assert math.evaluation.passed is True

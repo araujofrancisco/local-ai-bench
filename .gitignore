@@ -16,7 +16,7 @@ build/
 reports/
 *.jsonl
 !datasets/**/*.json
-data/*.db
+*.db
 logs/*.log
 
 # Generated knowledge-graph output
@@ -29,5 +29,4 @@ plugins/__pycache__/
 web/node_modules/
 web/dist/
 web/.astro/
-data/*.db
 logs/local-ai-bench.log

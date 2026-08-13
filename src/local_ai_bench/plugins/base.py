@@ -110,9 +110,14 @@ class MultiTurnPlugin(BenchmarkPlugin):
         """Build the request payload for the next user turn.
 
         Returns the same shape as :meth:`BenchmarkPlugin.build_request`
-        (``messages``/``options``/``tools``); ``transcript`` holds the turns
-        already completed (assistant replies). The orchestrator appends the
-        reply after sending, so the plugin never reconstructs history.
+        (``messages``/``options``/``tools``). The ``messages`` list must
+        contain the **full conversation** so far: the user prompt for each
+        completed turn, the prior assistant replies (including any
+        ``tool_calls``), and any tool results (role ``"tool"``) — the
+        orchestrator sends ``request["messages"]`` verbatim and never rebuilds
+        history itself. ``transcript`` holds the turns already completed
+        (assistant replies); the orchestrator appends each reply after sending,
+        so the plugin never reconstructs state.
         """
         raise NotImplementedError
 

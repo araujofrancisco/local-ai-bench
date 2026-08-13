@@ -1,14 +1,15 @@
 # LocalAIBench configuration.
 # The only required setting is how to connect to Ollama. If you omit `hosts`
-# entirely, the default local Ollama (http://127.0.0.1:11434) is used — or
-# $OLLAMA_HOST if that environment variable is set. Docker Compose sets
-# OLLAMA_HOST to the host machine's Ollama automatically.
+# entirely (the recommended starting point), the default local Ollama
+# (http://127.0.0.1:11434) is used — or $OLLAMA_HOST if that environment
+# variable is set. Docker Compose sets OLLAMA_HOST to the host machine's
+# Ollama automatically.
 #
-# When the Ollama server is on another machine, list it here:
-hosts:
-  - name: local
-    base_url: http://192.168.10.108:11434
-    timeout_seconds: 300
+# Benchmark other hosts too by listing them here, e.g.:
+#   hosts:
+#     - name: lab-server
+#       base_url: http://192.168.10.108:11434
+#       timeout_seconds: 300
 #
 # Models are NOT listed here — they are auto-detected from each host by
 # `GET /api/tags`. Choose which ones to benchmark at run time, e.g.:
@@ -77,7 +78,7 @@ plugins:
       # and require large/small < perf_ratio_default so O(n^2) answers that
       # pass the small assertions are still penalized.
       enable_perf: true
-      perf_ratio_default: 6.0
+      perf_ratio_default: 8.0
       # When a solution passes every executable check but a static AST scan
       # flags a known brute-force construct, deduct approach_penalty from the
       # case score so writing optimal code is rewarded.
@@ -92,10 +93,8 @@ plugins:
       context_sizes: [512, 1024, 4096, 8192, 16384]
       contains: true
     rag:
-      # Score factor applied when the answer imports a distractor-only fact.
       hallucination_penalty: 0.5
     function_calling:
-      # Tolerance for numeric tool arguments (strings compare normalized).
       arg_tolerance: 0.5
 
 runner:
@@ -147,11 +146,9 @@ weights:
   reasoning: 1.0
   structured_output: 1.0
   long_context: 1.0
-  multi_context: 1.0
   retrieval: 1.0
   function_calling: 1.0
   multi_turn: 1.0
-  agent_tool_use: 1.0
   safety: 1.0
   sql: 1.0
   multilingual: 1.0

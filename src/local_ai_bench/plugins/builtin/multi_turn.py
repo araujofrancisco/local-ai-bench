@@ -104,11 +104,19 @@ class MultiTurnPlugin(BaseTextPlugin, MultiTurnCapability):
         transcript: list[dict[str, Any]],
     ) -> dict[str, Any]:
         prompts: list[str] = case.input["turns"]
-        idx = len(transcript)  # number of assistant replies already received
-        if idx >= len(prompts):
-            idx = len(prompts) - 1
+        # Rebuild the whole conversation so the model actually sees earlier
+        # turns — the memory/consistency signals this plugin measures only make
+        # sense when the session history is forwarded to Ollama.
+        messages: list[dict[str, Any]] = []
+        for i, reply in enumerate(transcript):
+            if i < len(prompts):
+                messages.append({"role": "user", "content": prompts[i]})
+            messages.append({"role": "assistant", "content": reply.get("content") or ""})
+        idx = len(transcript)
+        if idx < len(prompts):
+            messages.append({"role": "user", "content": prompts[idx]})
         return {
-            "messages": [{"role": "user", "content": prompts[idx]}],
+            "messages": messages,
             "options": {"temperature": 0.0, "num_predict": 64},
         }
 

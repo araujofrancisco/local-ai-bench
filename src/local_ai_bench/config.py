@@ -75,11 +75,9 @@ class WeightsConfig(BaseModel):
     reasoning: float = 1.0
     structured_output: float = 1.0
     long_context: float = 1.0
-    multi_context: float = 1.0
     retrieval: float = 1.0
     function_calling: float = 1.0
     multi_turn: float = 1.0
-    agent_tool_use: float = 1.0
     safety: float = 1.0
     sql: float = 1.0
     multilingual: float = 1.0
@@ -216,7 +214,7 @@ plugins:
       # and require large/small < perf_ratio_default so O(n^2) answers that
       # pass the small assertions are still penalized.
       enable_perf: true
-      perf_ratio_default: 6.0
+      perf_ratio_default: 8.0
       # When a solution passes every executable check but a static AST scan
       # flags a known brute-force construct, deduct approach_penalty from the
       # case score so writing optimal code is rewarded.
@@ -284,11 +282,9 @@ weights:
   reasoning: 1.0
   structured_output: 1.0
   long_context: 1.0
-  multi_context: 1.0
   retrieval: 1.0
   function_calling: 1.0
   multi_turn: 1.0
-  agent_tool_use: 1.0
   safety: 1.0
   sql: 1.0
   multilingual: 1.0

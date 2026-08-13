@@ -872,15 +872,18 @@ class BenchmarkPlugin(ABC):
 
 Use capability mixins or optional methods.
 
-Example:
-
-```python
-class ContextAwarePlugin:
-    def context_probe_cases(self, ctx: "RunContext") -> Iterable[BenchmarkCase]:
-        raise NotImplementedError
-```
-
-This keeps the base interface small.
+Implemented: the `MultiTurnPlugin` capability (see
+`src/local_ai_bench/plugins/base.py`) for cases that are multi-turn
+conversations. A multi-turn plugin implements `turn_request(case, model, ctx,
+transcript)` instead of (or alongside) `build_request`, and sets `max_turns`;
+the orchestrator loops calling `turn_request` → send → append the assistant
+reply to `ctx.transcript` → repeat until `should_stop` returns True or
+`max_turns` is reached. `turn_request` must return the **full conversation** in
+`messages` (user prompt per completed turn + prior assistant replies + any
+`role: "tool"` results), so the model always sees its history; `evaluate` then
+scores the whole transcript plus the final response. Built-in consumers:
+`agent_tool_use` (max 6 turns, simulated tool execution) and `multi_turn`
+(max 3 turns, conversational memory).
 
 ### 14.4 Plugin discovery
 
@@ -1509,6 +1512,13 @@ weights:
   reasoning: 1.0
   structured_output: 1.0
   long_context: 1.0
+  retrieval: 1.0
+  function_calling: 1.0
+  multi_turn: 1.0
+  safety: 1.0
+  sql: 1.0
+  multilingual: 1.0
+  classification: 1.0
 ```
 
 Overall score:
@@ -1935,8 +1945,9 @@ Assert:
 
 ### Milestone Status
 
-Updated 2026-08-11. All v1 milestones are implemented and tested (94→99 unit
-tests passing; ruff + mypy clean). Features beyond the original plan are noted.
+Updated 2026-08-13. All v1 milestones are implemented and tested (221 unit +
+integration tests passing; ruff + mypy clean, mypy via a per-module override for
+`plugins.builtin.*`). Features beyond the original plan are noted.
 
 | Milestone | Status | Notes |
 |---|---|---|
@@ -1965,8 +1976,6 @@ Extras added beyond the v1 plan:
 
 ### Open / Next
 
-- Commit the in-flight changes: free-form `plugins.options`, `compare_default`,
-  dynamic context-window report table, weighted-plugin fallback in compare page.
 - Category weights are now editable from the Compare page (`/api/weights`), with
   a live "Weighted" overall-score column and DB-persisted overrides that apply
   to future runs. Stored per-run overall scores remain unchanged (recomputed
@@ -1981,6 +1990,33 @@ Extras added beyond the v1 plan:
   never sent; `max_retries` now correctly means "retries after the first
   attempt". `OllamaClient`/`RunOrchestrator` accept an optional `transport`
   for testability.
+
+### Recent bug fixes (2026-08-13 audit)
+
+- `agent_tool_use` no longer crashes: the Ollama `tools` schema was previously
+  double-wrapped (`"tools": [schema]` → `TypeError: unhashable type: 'list'`),
+  `_execute_tool` was never invoked, so tool results were never fed back, and
+  the loop never forwarded conversation history. `turn_request` now rebuilds the
+  full conversation (user prompt + assistant replies + `role: "tool"` results)
+  every turn, and `evaluate` reads `msg.get("tool_calls") or []` (a `None` tool
+  call no longer crashes scoring).
+- `calculate` now uses a safe AST interpreter (`_safe_calculate`) instead of
+  `eval`, so a model-supplied expression can never execute arbitrary code;
+  malformed or malicious expressions surface as tool output the model can
+  recover from.
+- `multi_turn` now forwards the full conversation history to Ollama on every
+  turn, making the memory/consistency signal meaningful (previously only the
+  current prompt was sent).
+- Dead category weights removed: `weights.multi_context` and
+  `weights.agent_tool_use` keys are gone (categories map to `long_context` and
+  `function_calling` respectively); `weights.multi_turn` added.
+- Coding perf checks are less flaky under load: fast probes are measured
+  best-of-N (minimum of several timings), slow/quadratic probes run once so the
+  check stays bounded, sub-millisecond measurements are floored at 1µs, and the
+  default `perf_ratio_default` bound is `8.0` (linear ≈ 4x on a 4x size increase,
+  O(n²) ≈ 16x, so quadratic answers are still rejected with noise headroom).
+- `benchmark.db` is now git-ignored (`*.db`); the stale tracked copy was removed
+  from the index.
 
 ---
 
@@ -2248,7 +2284,7 @@ Future plugins may include:
 - Regex generation benchmark.
 - ~~Classification benchmark~~ ✅ Built-in `classification` (v1: label-set matching for sentiment/triage/urgency/topic, deterministic).
 - Embedding benchmark, if Ollama embedding endpoints are used.
-- ~~Multi-turn conversation benchmark~~ ✅ Built-in `multi_turn` (v1: conversational memory and follow-up comprehension, capped at 4 turns).
+- ~~Multi-turn conversation benchmark~~ ✅ Built-in `multi_turn` (v1: conversational memory and follow-up comprehension, 3 turns per case).
 - Robustness benchmark against typos and noisy input.
 
 The plugin architecture must support these without redesign.
@@ -2263,7 +2299,7 @@ The plugin architecture must support these without redesign.
 | Ollama metadata incomplete | Wrong context assumptions | Allow manual model overrides |
 | LLM judge unstable | Inconsistent scores | Prefer deterministic metrics where possible |
 | Vision payload incompatibility | Plugin failures | Detect capability and skip |
-| Code execution unsafe | Security risk | Disabled by default, sandbox later |
+| Code execution unsafe | Security risk | `execute_code` on by default but sandboxed: generated code runs in an isolated `python -I` subprocess with a per-case timeout and no user site-packages; untrusted models can set `execute_code: false` |
 | Context search too slow | Poor UX | Limit candidates, cache probes, allow subset runs |
 | Reports too large | Hard to inspect | Separate summary report from raw JSONL |
 | Latency metrics noisy | Misleading results | Warmup, repetitions, median/p95 metrics |

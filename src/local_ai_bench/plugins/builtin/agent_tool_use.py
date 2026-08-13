@@ -7,6 +7,8 @@ answer. Scores both correct tool orchestration and final answer correctness.
 
 from __future__ import annotations
 
+import ast
+import json
 from collections.abc import Iterable, Sequence
 from typing import Any, ClassVar
 
@@ -26,14 +28,13 @@ from local_ai_bench.plugins.score import normalize_text
 
 # Tool implementations — pure functions the "agent" can call
 # In a real deployment these would call external APIs; here they're pure for
-# deterministic scoring.
+# deterministic scoring. The `calculate` tool deliberately uses a safe
+# AST evaluator (never `eval`) because the expression comes from the model.
 TOOL_IMPLS = {
     "get_weather": lambda city: (
         f"Weather in {city}: 22°C, partly cloudy, humidity 65%"
     ),
-    "calculate": lambda expression: (
-        f"Result: {eval(expression)}"  # noqa: S307 - controlled test env
-    ),
+    "calculate": lambda expression: f"Result: {_safe_calculate(expression)}",
     "lookup_user": lambda user_id: (
         f"User {user_id}: name=Alex Chen, email=alex@example.com, tier=premium"
     ),
@@ -44,6 +45,62 @@ TOOL_IMPLS = {
         f"SKU {sku}: 42 units in stock, reorder point 10"
     ),
 }
+
+
+def _safe_calculate(expression: str) -> float:
+    """Evaluate a numeric expression using literals and arithmetic ops only.
+
+    Interprets the parsed AST directly (no ``eval``) so a model-supplied
+    expression can never execute arbitrary code. Anything beyond numbers,
+    arithmetic operators, and parentheses is rejected.
+    """
+    try:
+        tree = ast.parse(expression.strip(), mode="eval")
+    except SyntaxError as exc:
+        raise ValueError(f"invalid arithmetic expression: {expression!r}") from exc
+
+    def _eval_node(node: ast.AST) -> float:
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return float(node.value)
+        if isinstance(node, ast.BinOp):
+            left = _eval_node(node.left)
+            right = _eval_node(node.right)
+            if isinstance(node.op, ast.Add):
+                return left + right
+            if isinstance(node.op, ast.Sub):
+                return left - right
+            if isinstance(node.op, ast.Mult):
+                return left * right
+            if isinstance(node.op, ast.Div):
+                return left / right
+            if isinstance(node.op, ast.FloorDiv):
+                return left // right
+            if isinstance(node.op, ast.Mod):
+                return left % right
+            if isinstance(node.op, ast.Pow):
+                return left**right
+        if isinstance(node, ast.UnaryOp):
+            operand = _eval_node(node.operand)
+            if isinstance(node.op, ast.USub):
+                return -operand
+            if isinstance(node.op, ast.UAdd):
+                return +operand
+        raise ValueError(f"unsupported syntax: {type(node).__name__}")
+
+    return float(_eval_node(tree.body))
+
+
+def _parse_arguments(raw: Any) -> dict[str, Any]:
+    """Normalize Ollama tool arguments (dict or JSON string) to a dict."""
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        try:
+            parsed: Any = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
 
 # Each case: initial prompt, available tools, expected final answer,
 # and required tool-call sequence (for orchestration scoring)
@@ -196,7 +253,7 @@ class AgentToolUsePlugin(BaseTextPlugin, MultiTurnCapability):
                 dataset_version=self.dataset_version,
                 input={"prompt": spec["prompt"]},
                 expected={
-                    "tools": [spec["tools"]],  # list of tool names
+                    "tools": spec["tools"],  # list of tool names
                     "expected_answer": spec["expected_answer"],
                     "expected_tool_sequence": spec["expected_tool_sequence"],
                     "answer_keywords": spec["answer_keywords"],
@@ -212,13 +269,33 @@ class AgentToolUsePlugin(BaseTextPlugin, MultiTurnCapability):
     ) -> dict[str, Any]:
         expected = case.expected or {}
         prompts: list[str] = [case.input["prompt"]] + ctx.options.get("followup_prompts", [])
-        idx = len(transcript)
-        if idx >= len(prompts):
-            idx = len(prompts) - 1
-
         tools = [_make_tool_schema(t) for t in expected.get("tools", [])]
+
+        # Rebuild the full conversation so Ollama sees the history: the user
+        # prompt for each completed turn, the assistant reply, and — whenever
+        # the model issued tool calls — the deterministic tool results fed back
+        # with role "tool". The runner never reconstructs history itself.
+        messages: list[dict[str, Any]] = []
+        for i, reply in enumerate(transcript):
+            if i < len(prompts):
+                messages.append({"role": "user", "content": prompts[i]})
+            assistant: dict[str, Any] = {
+                "role": "assistant",
+                "content": reply.get("content") or "",
+            }
+            calls = reply.get("tool_calls")
+            if calls:
+                assistant["tool_calls"] = calls
+            messages.append(assistant)
+            if calls:
+                for call in calls:
+                    messages.append({"role": "tool", "content": self._execute_tool(call)})
+
+        idx = len(transcript)
+        if idx < len(prompts):
+            messages.append({"role": "user", "content": prompts[idx]})
         return {
-            "messages": [{"role": "user", "content": prompts[idx]}],
+            "messages": messages,
             "options": {"temperature": 0.0, "num_predict": 256},
             "tools": tools,
         }
@@ -231,14 +308,22 @@ class AgentToolUsePlugin(BaseTextPlugin, MultiTurnCapability):
         tool_calls = response.tool_calls or []
         return len(tool_calls) == 0
 
-    def _execute_tool(self, name: str, args: dict[str, Any]) -> str:
-        """Execute a tool and return the result string."""
+    def _execute_tool(self, call: dict[str, Any]) -> str:
+        """Execute a tool call and return its result string.
+
+        ``call`` is an Ollama tool_calls entry (``{"function": {"name", "arguments"}}``);
+        arguments may be a dict or a JSON-encoded string. Tool errors become
+        tool output so the model can recover, mirroring a real agent loop.
+        """
+        fn = call.get("function", {})
+        name = fn.get("name")
+        args = _parse_arguments(fn.get("arguments"))
         impl = TOOL_IMPLS.get(name)
         if impl is None:
             return f"Error: unknown tool {name}"
         try:
             return impl(**args)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 - tool errors surface to the model
             return f"Error executing {name}: {exc}"
 
     async def evaluate(self, case, response, ctx) -> Evaluation:  # noqa: ANN001
@@ -249,9 +334,9 @@ class AgentToolUsePlugin(BaseTextPlugin, MultiTurnCapability):
         expected_sequence = expected.get("expected_tool_sequence", [])
         actual_sequence: list[tuple[str, dict]] = []
         for msg in transcript:
-            for call in msg.get("tool_calls", []):
+            for call in msg.get("tool_calls") or []:
                 fn = call.get("function", {})
-                actual_sequence.append((fn.get("name"), fn.get("arguments", {})))
+                actual_sequence.append((fn.get("name"), _parse_arguments(fn.get("arguments"))))
 
         tool_score = self._score_tool_sequence(actual_sequence, expected_sequence)
 

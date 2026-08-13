@@ -32,6 +32,7 @@ directory, and plugin loading. Run this first when something is wrong.
 
 ```bash
 local-ai-bench doctor
+local-ai-bench doctor --config config.yaml   # validate a specific config
 ```
 
 ### `models`
@@ -40,6 +41,7 @@ List models discovered on the configured hosts.
 
 ```bash
 local-ai-bench models
+local-ai-bench models --config config.yaml
 ```
 
 ### `plugins`
@@ -48,6 +50,7 @@ List the benchmark plugins that are available (built-in + local).
 
 ```bash
 local-ai-bench plugins
+local-ai-bench plugins --config config.yaml
 ```
 
 ### `run`
@@ -57,6 +60,7 @@ are auto-discovered; select them with flags:
 
 ```bash
 local-ai-bench run                                 # all discovered models
+local-ai-bench run --config config.yaml            # use a specific config
 local-ai-bench run --models 'qwen*'                # glob match
 local-ai-bench run --models llama3.2:latest,qwen2.5-coder:14b
 local-ai-bench run --exclude '*:0.8b'              # skip some models
@@ -67,20 +71,27 @@ local-ai-bench run --db benchmark.db               # save results to SQLite
 ### `run-single`
 
 Run **all enabled plugins** for a single model and save results to SQLite and
-files. Useful for deep-diving one model.
+files. Useful for deep-diving one model. The model name is a required positional
+argument; it must match a discovered model exactly.
 
 ```bash
-local-ai-bench run-single --db benchmark.db
+local-ai-bench run-single llama3.2:latest
+local-ai-bench run-single llama3.2:latest --db benchmark.db
+local-ai-bench run-single llama3.2:latest --config config.yaml
 ```
 
 ### `report`
 
 List, view, or open generated reports (JSON / Markdown / HTML per the
-`reporting.formats` config).
+`reporting.formats` config). The optional `action` argument is one of
+`list` (default), `view`, or `open`.
 
 ```bash
-local-ai-bench report               # newest run
-local-ai-bench report --run <run_id>
+local-ai-bench report                 # list newest run
+local-ai-bench report list            # list all runs
+local-ai-bench report view            # view the newest report
+local-ai-bench report open --run <run_id>   # open a specific report
+local-ai-bench report --config config.yaml
 ```
 
 ### `history`
@@ -191,8 +202,10 @@ excluded from selection).
   score: the **Weighted** column recomputes every model's overall score live
   from its per-plugin scores. **Save weights** persists overrides (via
   `PUT /api/weights`) so future runs use them; **Reset to defaults** clears
-  overrides. Weights default to `1.0` for every category, and unlisted plugin
-  categories (e.g. `multi_context`) always weight `1.0`.
+  overrides. Weights default to `1.0` for every category. Categories are
+  normalized so that `agent_tool_use` shares the `function_calling` weight and
+  `multi_context` shares the `long_context` weight; unlisted categories fall
+  back to `1.0`.
 
 ### Plugins page
 
@@ -213,8 +226,13 @@ resets all option overrides.
 #### Plugin options that affect behavior
 
 Per-plugin option defaults and their effects are documented in
-[plugins.md](plugins.md). Only `coding` and `vision`/`multi_context` currently
-read options; local plugins can read any value from `ctx.options`.
+[plugins.md](plugins.md). Built-ins that read options at run time include
+`coding` (`execute_code`, `timeout_seconds`, `enable_perf`, `perf_ratio_default`,
+`approach_penalty`, `judge_weight`), `vision` (`max_image_dimension`),
+`multi_context` (`prompt`, `expected`, `context_sizes`, `contains`, `filler`),
+`long_context` (`max_context_tokens`), `rag` (`hallucination_penalty`),
+`function_calling` (`arg_tolerance`), and `agent_tool_use` (`followup_prompts`);
+local plugins can read any value from `ctx.options`.
 
 ---
 
@@ -280,7 +298,7 @@ Base URL: `http://<host>:8000`. Interactive OpenAPI docs at `/docs`.
 | GET | `/api/benchmarks/{run_id}/status` | Live progress/status (retained briefly after completion) |
 | GET | `/api/benchmarks/{run_id}/cases` | Per-case rows for a run, including error text (transport + evaluate failures) |
 | DELETE | `/api/benchmarks/{run_id}` | Delete a run (cascades all its data). **409** if the run is still active |
-| POST | `/api/benchmarks/delete` | Batch delete (body `{"run_ids":[...]}`). **409** if any id is still active |
+| POST, DELETE | `/api/benchmarks/delete` | Batch delete (body `{"run_ids":[...]}`). **409** if any id is still active |
 | GET | `/api/compare` | Compare models (`?run=<id>` optional) |
 | GET | `/api/history` | History with the same filters + `filters` meta for dropdowns |
 | GET | `/api/export/{run_id}.{json,csv,md}` | Export a run |

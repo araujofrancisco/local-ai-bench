@@ -36,6 +36,14 @@ aggregate(case_results)    → PluginAggregate (summary score + metrics)
 teardown(ctx)            → clean up subprocesses/files (optional)
 ```
 
+Multi-turn plugins ([`MultiTurnPlugin`](src/local_ai_bench/plugins/base.py)) replace the
+single `build_request`/`evaluate` pair with a turn loop: the runner calls
+`turn_request(case, model, ctx, transcript)` per turn, sends the request, appends the
+assistant reply to `ctx.transcript`, and repeats until `should_stop(...)` returns True
+or `max_turns` is reached. `turn_request` must return the **full conversation** in
+`messages` (user prompts + prior assistant replies + any `role: "tool"` results), and
+`evaluate` scores the whole transcript through `ctx.transcript` plus the final response.
+
 Key types (all in [`domain/models.py`](src/local_ai_bench/domain/models.py)):
 
 | Type | Holds |
@@ -142,6 +150,7 @@ Per-plugin default `judge_weight`:
 | coding | `0.0` (disabled by default — set under `plugins.options.coding`) |
 | vision | `0.0` (no judge integration; deterministic keyword recall only) |
 | agent_tool_use | `0.0` (deterministic only) |
+| multi_turn | `0.0` (deterministic only) |
 | safety_refusal | `0.0` (deterministic refusal detection) |
 | sql | `0.0` (deterministic execution-based row comparison) |
 | multilingual | `0.0` (deterministic Unicode-script + keyword analysis) |
@@ -271,9 +280,12 @@ Each case declares an `expected` payload of:
   - `weight` — partial-credit weight (default `1.0`).
 - `perf` *(optional)* — relative big-O scale checks. Each defines a `small` and
   `large` probe expression plus a `ratio` bound; the harness times the solution
-  on both (warmup + measure) inside one isolated subprocess and requires
-  `large_ms / small_ms < ratio`. An O(n²) answer that passes the small
-  assertions is still penalized.
+  on both inside one isolated subprocess and requires `large_ms / small_ms < ratio`.
+  Fast probes are measured best-of-N (the minimum of several runs, so background
+  noise — which can only inflate a timing — does not cause false failures), while
+  slow probes (e.g. an O(n²) answer on the large input) run once so the check
+  stays bounded. An O(n²) answer that passes the small assertions is still
+  penalized.
 - `approach` *(optional)* — names of static AST anti-pattern checks (see below)
   applied to the generated source; used to penalize brute-force solutions that
   nonetheless pass.
@@ -318,7 +330,7 @@ probe expressions — never arbitrary model output — via `eval` of known liter
 | `execute_code` | `true` | When `false`, evaluation is static only (syntax + required function defined); no tests run. |
 | `timeout_seconds` | `30` | Per-case (and per-perf-probe) subprocess timeout. |
 | `enable_perf` | `true` | Run the relative big-O perf checks for cases that declare `perf`. |
-| `perf_ratio_default` | `6.0` | Default `large/small` ratio bound used by perf checks (a per-check `ratio` overrides). |
+| `perf_ratio_default` | `8.0` | Default `large/small` ratio bound used by perf checks (a per-check `ratio` overrides). |
 | `approach_penalty` | `0.1` | Score deducted when a passing solution is flagged by an `approach` detector. |
 | `judge_weight` | `0.0` | LLM-as-judge code-quality blend weight (`0` = disabled). |
 
@@ -451,40 +463,85 @@ call) and `name_match_ratio`. Per-case metrics: `tool_calls`, `answered_directly
 ---
 
 ### 6.12 `agent_tool_use`
-**Category** `function_calling` · **Modality** `text` · **Dataset** `v1` (1 case,
-multi-turn)
+**Category** `function_calling` · **Modality** `text` · **Dataset** `v1` (5 cases,
+multi-turn) · **Version** `0.1.0`
 
 Purpose: end-to-end agent behavior — the model must drive a *multi-turn* tool
 loop (call a tool, observe the result, call again, and answer) rather than
-relying on a single-shot tool call. The case ships two tools
-(`calculate` and `reverse`) plus a prompt that requires chaining them
-("calculate 6×7, reverse the digits, then tell me").
+relying on a single-shot tool call. The five cases (weather, math, user lookup,
+multi-step lookup-then-query, inventory) each ship their own `tools` schema plus
+a prompt that requires chaining them.
 
 - `supports_model`: only models reporting `supports_tools == True`.
-- Requests are `temperature: 0.0` with a strict `num_predict` budget
-  (`1000 / 4` turns) to bound runaway loops. Up to 4 assistant/tool-call rounds
-  are performed; the client captures tool calls at each round.
-- The benchmark deterministically *executes* the tool calls (simple arithmetic
-  and string reversal) so the model sees real tool results — no host function
-  calling required.
+- A `MultiTurnPlugin` capability: each case attempt runs up to `max_turns = 6`
+  rounds. `turn_request` rebuilds the **full conversation** every turn — user
+  prompt, prior assistant replies (including their `tool_calls`), and the tool
+  results fed back with `role: "tool"` — so the model always sees its own
+  earlier calls and outcomes.
+- The benchmark deterministically *executes* the tool calls (pure Python
+  implementations) so the model sees real tool results — no host function
+  calling required. The `calculate` tool evaluates the model-supplied expression
+  with a **safe AST interpreter (never `eval`)**, so a malicious or malformed
+  expression can only produce an error string the model can recover from,
+  mirroring a real agent loop. Unknown tools and exceptions are likewise
+  returned as tool output rather than crashing the run.
+- The loop ends when the model produces a final answer (an assistant message
+  with no `tool_calls`) or `max_turns` is reached (`should_stop`). Requests are
+  `temperature: 0.0`, `num_predict: 256`.
 
-Evaluation (observed signals across the whole conversation):
+Evaluation (deterministic, over the whole transcript):
 
-- A synthetic "listener" reads the final assistant text and checks for both the
-  final digits (`84`) and words like "final"/"done" to confirm a terminating
-  answer.
-- Full credit for a correct final answer; half credit if the model produced real
-  tool calls but the final text wasn't the right answer.
-- Binaries: `tool_call_used`, `tool_chained` (two different tools invoked),
-  `final_ok`.
-- `passed` requires the correct final answer.
+- **Tool orchestration (40% of the score)** — `_score_tool_sequence` compares
+  the actual call sequence against the expected `(tool_name, args)` sequence:
+  correct name *and* args = full credit per step, correct name with imperfect
+  args = half credit. Argument values match if numeric-close (tolerance 0.5) or
+  normalized-equal; Ollama arguments may arrive as a dict or a JSON string.
+- **Answer correctness (60%)** — keyword recall of `answer_keywords` in the
+  final assistant text.
+- `passed` requires a perfect `1.0` (pass@1 semantics).
 
-Deterministic only (no judge). Aggregation: mean score. Per-case metrics:
-`turns`, `tools`, `tool_call_used`, `tool_chained`, `final_text`, `final_ok`.
+No judge. Per-case metrics: `tool_orchestration_score`, `answer_score`,
+`expected_tool_sequence`, `actual_tool_sequence`, `turns`. Aggregate metrics:
+`avg_tool_score`, `avg_answer_score`.
+
+Options:
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `followup_prompts` | `[]` | Extra user prompts appended after the case prompt to extend the conversation |
 
 ---
 
-### 6.13 `safety_refusal`
+### 6.13 `multi_turn`
+**Category** `multi_turn` · **Modality** `text` · **Dataset** `v1` (3 cases) · **Version** `0.1.0`
+
+Purpose: memory and instruction-following across a short conversation — the
+model must retain a fact given in an earlier turn (a secret token, a stated
+preference, an account id) and reproduce/apply it in later turns. Unlike
+`agent_tool_use`, no tools are involved; the signal is pure conversational
+memory.
+
+- A `MultiTurnPlugin` capability: `max_turns = 3`. Each case declares the user
+  prompts for its turns; `turn_request` forwards the **full conversation**
+  (prior user prompts + assistant replies) to Ollama on every turn so the model
+  actually sees the history — this is what makes the memory/consistency signal
+  meaningful. Requests are `temperature: 0.0`, `num_predict: 64`.
+
+Evaluation (deterministic, per-turn over the transcript):
+
+- `turn_exact` — the reply must normalize-equal a single expected token (used
+  for the token/account-id cases).
+- `turn_keywords` — every expected keyword must appear in the reply (used for
+  the preference case, e.g. `100` and `celsius`).
+- Case score = mean of the per-turn scores; `passed` requires `1.0` and no
+  response error.
+
+No judge. Aggregation: mean score plus `avg_turns`. Per-case metrics: `turns`,
+`per_turn` (list of `{turn, score}`).
+
+---
+
+### 6.14 `safety_refusal`
 **Category** `safety` · **Modality** `text` · **Dataset** `v1` (10 cases:
 5 harmful, 5 benign)
 
@@ -511,7 +568,7 @@ Deterministic only (no judge). Aggregation: mean score. Per-case metrics:
 
 ---
 
-### 6.14 `sql`
+### 6.15 `sql`
 **Category** `sql` · **Modality** `text` · **Dataset** `v1` (6 cases)
 
 Purpose: the model must write a correct SQLite `SELECT` for a natural-language
@@ -543,7 +600,7 @@ Per-case metrics: `sql_extracted`, `sql`, `error`, `rows_expected`,
 
 ---
 
-### 6.15 `multilingual`
+### 6.16 `multilingual`
 **Category** `multilingual` · **Modality** `text` · **Dataset** `v1` (8 cases)
 
 Purpose: the model must understand a question written in a non-English language
@@ -569,7 +626,7 @@ mean score. Per-case metrics: `language`, `language_kept`, `keyword_recall`.
 
 ---
 
-### 6.16 `classification`
+### 6.17 `classification`
 **Category** `classification` · **Modality** `text` · **Dataset** `v1` (7 cases)
 
 Purpose: the model must assign free text to one label from a supplied set —

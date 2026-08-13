@@ -16,9 +16,12 @@ Checks, in order:
    ```bash
    curl -fsS http://host.docker.internal:11434/api/version
    ```
-2. The connection comes from `hosts` in `config/default.yaml`, **not** the
-   `OLLAMA_HOST` env var (that is only a reference). Confirm the `base_url` is
-   reachable from the container's network, not just from your host shell.
+2. The connection comes from `hosts` in `config/default.yaml` — **not** the
+   `OLLAMA_HOST` env var (that is only a reference). The shipped default
+   contains no `hosts` entries and falls back to `http://127.0.0.1:11434`;
+   declare your real host explicitly (see the commented example in the file).
+   Confirm the `base_url` is reachable from the container's network, not just
+   from your host shell.
 3. On Linux Docker Engine, `host.docker.internal` may not resolve. Add to the
    service:
    ```yaml
@@ -75,9 +78,15 @@ separately (`cd web && npm install && npm run build`) and copy `web/dist`.
   Saving via the Plugins page writes to the DB, merged over config defaults at
   run time.
 - Deleting the DB (`down -v`) resets all overrides.
-- Only `coding` (`execute_code`, `timeout_seconds`) and `vision`
-  (`max_image_dimension`) currently use options. Options for other plugins are
-  stored but have no effect unless the plugin reads `ctx.options`.
+- A built-in only reacts to an option if its `evaluate`/`build_request` reads
+  `ctx.options` for it. Plugins that do: `coding` (`execute_code`,
+  `timeout_seconds`, `enable_perf`, `perf_ratio_default`, `approach_penalty`,
+  `judge_weight`), `vision` (`max_image_dimension`), `multi_context` (`prompt`,
+  `expected`, `context_sizes`, `contains`, `filler`), `long_context`
+  (`max_context_tokens`), `rag` (`hallucination_penalty`), `function_calling`
+  (`arg_tolerance`), and `agent_tool_use` (`followup_prompts`). Options for
+  other plugins are stored but have no effect unless the plugin reads
+  `ctx.options`.
 
 ## Plugin does not show up
 
@@ -113,8 +122,9 @@ but it does run model output as code:
   env overrides).
 - When `coding.enable_perf: true` (the default), cases that declare a `perf`
   check additionally time the generated solution on a small and a large probe
-  (separate isolated subprocesses) to verify the intended time complexity — an
-  O(n^2) answer that passes the small assertions is still penalized.
+  (in one isolated subprocess; fast probes are measured best-of-N) to verify
+  the intended time complexity — an O(n^2) answer that passes the small
+  assertions is still penalized.
 - Prefer `execute_code: false` (evaluation is then static only: syntax plus the
   required function/class being defined) when benchmarking untrusted models,
   or run the container in a sandboxed/isolated environment. Set `enable_perf:
