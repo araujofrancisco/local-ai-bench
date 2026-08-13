@@ -19,6 +19,9 @@ reports/
 *.db
 logs/*.log
 
+# Deployment-specific environment overrides
+.env
+
 # Generated knowledge-graph output
 graphify-out/
 
