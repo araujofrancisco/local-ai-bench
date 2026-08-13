@@ -3,7 +3,7 @@
 Local-first, plugin-based LLM benchmarking for [Ollama](https://ollama.com)
 hosts on your own network.
 
-LocalAIBench discovers models from one or more Ollama hosts, runs configurable
+Local-AI-Bench discovers models from one or more Ollama hosts, runs configurable
 benchmark plugins against them, scores the results, and stores everything in
 SQLite for comparison. It ships with both a terminal CLI and a web UI
 (FastAPI + Astro) that you can deploy in a single Docker container.
