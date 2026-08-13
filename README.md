@@ -1,4 +1,4 @@
-# LocalAIBench
+# Local-AI-Bench
 
 Local-first, plugin-based LLM benchmarking for [Ollama](https://ollama.com)
 hosts on your own network.
