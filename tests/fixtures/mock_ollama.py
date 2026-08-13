@@ -16,25 +16,54 @@ MODELS = [
         "name": "e2e-model:latest",
         "digest": "deadbeef",
         "details": {"context_length": 8192},
+        "capabilities": ["tools"],
     }
 ]
 
 
 def _chat_body(payload: dict[str, Any]) -> str:
-    """Streaming SSE body (Ollama /api/chat). Canned answer scores 1.0."""
-    lines = [
-        {"message": {"role": "assistant", "content": "36"}, "done": False},
-        {
-            "done": True,
-            "done_reason": "stop",
-            "total_duration": 500_000_000,
-            "load_duration": 100_000_000,
-            "prompt_eval_count": 20,
-            "prompt_eval_duration": 40_000_000,
-            "eval_count": 5,
-            "eval_duration": 100_000_000,
-        },
-    ]
+    """Streaming SSE body (Ollama /api/chat). Canned answer scores 1.0.
+
+    When the payload declares ``tools`` the model "calls" get_weather(city=Paris)
+    to exercise the tool-call capture path in the client.
+    """
+    if payload.get("tools"):
+        lines = [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {"function": {"name": "get_weather", "arguments": {"city": "Paris"}}}
+                    ],
+                },
+                "done": False,
+            },
+            {
+                "done": True,
+                "done_reason": "tool_calls",
+                "total_duration": 500_000_000,
+                "load_duration": 100_000_000,
+                "prompt_eval_count": 20,
+                "prompt_eval_duration": 40_000_000,
+                "eval_count": 5,
+                "eval_duration": 100_000_000,
+            },
+        ]
+    else:
+        lines = [
+            {"message": {"role": "assistant", "content": "36"}, "done": False},
+            {
+                "done": True,
+                "done_reason": "stop",
+                "total_duration": 500_000_000,
+                "load_duration": 100_000_000,
+                "prompt_eval_count": 20,
+                "prompt_eval_duration": 40_000_000,
+                "eval_count": 5,
+                "eval_duration": 100_000_000,
+            },
+        ]
     return "\n".join(json.dumps(line) for line in lines) + "\n"
 
 

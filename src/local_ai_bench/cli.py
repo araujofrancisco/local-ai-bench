@@ -17,7 +17,7 @@ from rich.table import Table
 
 from local_ai_bench import __version__
 from local_ai_bench.config import BenchmarkConfig, config_hash, load_config, write_default_config
-from local_ai_bench.domain.events import Event
+from local_ai_bench.domain.events import Event, Events
 from local_ai_bench.domain.models import ModelInfo
 from local_ai_bench.ollama.client import OllamaClient
 from local_ai_bench.ollama.discovery import discover_models
@@ -339,9 +339,17 @@ def _execute_run(
     with Progress(
         SpinnerColumn(), TextColumn("[progress.description]{task.description}"), transient=True
     ) as progress:
-        progress.add_task(description="Running benchmarks...", total=None)
+        task = progress.add_task(description="Planning benchmark…", total=None)
 
         def on_event(event: Event) -> None:
+            if event.kind == Events.RUN_PLANNED:
+                progress.update(
+                    task,
+                    total=int(event.data.get("total_cases", 0)),
+                    description="Running benchmarks…",
+                )
+            elif event.kind in (Events.CASE_COMPLETED, Events.CASE_FAILED):
+                progress.advance(task)
             console.log(
                 f"[{event.kind}] {event.model or ''} {event.plugin or ''} {event.case_id or ''}".strip()
             )

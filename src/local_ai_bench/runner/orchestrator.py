@@ -39,7 +39,7 @@ from local_ai_bench.domain.models import (
 from local_ai_bench.judge import Judge
 from local_ai_bench.ollama.client import OllamaClient
 from local_ai_bench.ollama.discovery import discover_models
-from local_ai_bench.plugins.base import BenchmarkPlugin, RunContext
+from local_ai_bench.plugins.base import BenchmarkPlugin, MultiTurnPlugin, RunContext
 from local_ai_bench.selection import filter_models
 from local_ai_bench.utils.logging import get_logger
 
@@ -70,6 +70,7 @@ class RunOrchestrator:
         self.plugin_options = plugin_options
         self._client_transport = client_transport
         self._events: list[Event] = []
+        self._planned_total = 0
 
     def emit(self, event: Event) -> None:
         self._events.append(event)
@@ -117,27 +118,80 @@ class RunOrchestrator:
         return result
 
     async def _run_host(self, host: HostConfig, result: RunResult) -> None:
+        """Run every selected model on this host.
+
+        After discovery (and before any case runs) it publishes the cumulative
+        planned case-run count so progress layers can show a fixed total. A
+        single host — the common case — reports the exact final total up front;
+        multi-host totals accrue host by host as each is discovered.
+        """
         client = OllamaClient(
             host.base_url, host.timeout_seconds, transport=self._client_transport
         )
         try:
-            version = await client.health()
-            self.emit(Event(Events.HOST_CHECKED, host=host.name, message="ok", data=version))
-            all_models = await discover_models(client, host.name)
-            selected = _select_models(all_models, self.config.models, self.model_filter)
-            for model in selected:
+            try:
+                version = await client.health()
+                self.emit(Event(Events.HOST_CHECKED, host=host.name, message="ok", data=version))
+                all_models = await discover_models(client, host.name)
+                selected = _select_models(all_models, self.config.models, self.model_filter)
+                for model in selected:
+                    self.emit(
+                        Event(Events.MODEL_DISCOVERED, host=host.name, model=model.model_name)
+                    )
+
+                # Planning pass: count every case-run before any network work so
+                # the published total is fixed for the whole run instead of
+                # accruing alongside completions.
+                planned_total = 0
+                for model in selected:
+                    for plugin in self.plugins:
+                        if not plugin.supports_model(model):
+                            continue
+                        try:
+                            planned_total += self._count_case_runs(model, plugin)
+                        except Exception as exc:  # noqa: BLE001 - planning must not break the run
+                            log.warning(
+                                "case count failed for %s/%s: %s",
+                                model.model_name, plugin.id, exc,
+                            )
+                self._planned_total += planned_total
                 self.emit(
-                    Event(Events.MODEL_DISCOVERED, host=host.name, model=model.model_name)
+                    Event(
+                        Events.RUN_PLANNED,
+                        host=host.name,
+                        data={"total_cases": self._planned_total},
+                    )
                 )
-                try:
-                    summary = await _run_model(self, client, host, model)
-                    result.models.append(summary)
-                except Exception as exc:  # noqa: BLE001 - isolation per model
-                    msg = f"model {model.model_name} failed: {exc}"
-                    log.warning(msg)
-                    result.errors.append(msg)
+
+                # Execution pass: the same models and gating as the plan, so
+                # planned and executed case counts cannot drift.
+                for model in selected:
+                    try:
+                        summary = await _run_model(self, client, host, model)
+                        result.models.append(summary)
+                    except Exception as exc:  # noqa: BLE001 - isolation per model
+                        msg = f"model {model.model_name} failed: {exc}"
+                        log.warning(msg)
+                        result.errors.append(msg)
+            except Exception as exc:  # noqa: BLE001 - discovery failure; run() reports it
+                log.warning("host %s discovery failed: %s", host.name, exc)
+                raise
         finally:
             await client.aclose()
+
+    def _count_case_runs(self, model: ModelInfo, plugin: BenchmarkPlugin) -> int:
+        """Number of case-runs this plugin will produce for ``model``.
+
+        Mirrors ``_run_model``'s context construction (model metadata merged
+        over plugin options) so the planned total cannot drift from the count
+        actually executed. ``cases()`` is deterministic and pure for every
+        built-in; a pathological local plugin is caught by the caller. Warmups
+        and retries do not add to the case count.
+        """
+        ctx = RunContext(
+            {**model.model_dump(), **self._plugin_options_for(plugin.id)}
+        )
+        return sum(1 for _ in plugin.cases(ctx)) * self.config.runner.repetitions
 
 
 async def _run_model(
@@ -185,7 +239,9 @@ async def _run_model(
                     orchestrator.emit(
                         Event(Events.CASE_STARTED, host=host.name, model=model.model_name, case_id=case.id)
                     )
-                    resp = await _send_with_retries(client, model, plugin, case, ctx, runner)
+                    resp = await _run_case_attempt(
+                        client, model, plugin, case, ctx, runner
+                    )
                     try:
                         evaluation = await plugin.evaluate(case, resp, ctx)
                     except Exception as exc:  # noqa: BLE001 - isolation per case
@@ -299,7 +355,7 @@ def _weighted_mean(scored: list[tuple[float, float]]) -> float | None:
     return round(sum(s * w for s, w in scored) / total_weight, 4)
 
 
-async def _send_with_retries(
+async def _run_case_attempt(
     client: OllamaClient,
     model: ModelInfo,
     plugin: BenchmarkPlugin,
@@ -307,12 +363,62 @@ async def _send_with_retries(
     ctx: RunContext,
     runner: RunnerConfig,
 ) -> ModelResponse:
+    """Execute one case attempt, returning the final ModelResponse.
+
+    Single-shot plugins send one request. Multi-turn plugins (``MultiTurnPlugin``)
+    drive up to ``max_turns`` requests, accumulating assistant replies in
+    ``ctx.transcript``; the final turn's response is returned for scoring.
+    """
+    if not isinstance(plugin, MultiTurnPlugin):
+        return await _send_with_retries(client, model, plugin, case, ctx, runner)
+
+    transcript: list[dict[str, Any]] = []
+    ctx.transcript = transcript
+    ctx.turn_count = 0
+    for turn in range(plugin.max_turns):
+        request = plugin.turn_request(case, model, ctx, transcript)
+        resp = await _send_with_retries(
+            client, model, plugin, case, ctx, runner, request=request
+        )
+        # Every turn becomes an assistant message in the running transcript so
+        # the next turn_request can see the conversation so far; a mid-turn
+        # transport failure ends the conversation with that error response.
+        transcript.append(
+            {
+                "role": "assistant",
+                "content": resp.text,
+                "tool_calls": resp.tool_calls,
+                "ms": resp.timing.total_ms,
+                "error": resp.error,
+            }
+        )
+        ctx.transcript = transcript
+        ctx.turn_count = turn + 1
+        if resp.error is not None or plugin.should_stop(case, resp, ctx, turn):
+            return resp
+    # Loop ended by max_turns: ensure a non-None return path (defensive).
+    return _error_response("multi-turn loop exited without a response")
+
+
+async def _send_with_retries(
+    client: OllamaClient,
+    model: ModelInfo,
+    plugin: BenchmarkPlugin,
+    case: BenchmarkCase,
+    ctx: RunContext,
+    runner: RunnerConfig,
+    *,
+    request: dict[str, Any] | None = None,
+) -> ModelResponse:
     """Send a chat request, retrying only transient errors (PLAN §13.5).
 
     Never raises for transport/HTTP failures — it returns a ModelResponse with
     ``error`` set so the case is recorded as failed and the run continues.
+    Pass ``request`` to use a pre-built payload (the multi-turn loop does so for
+    each turn) instead of the plugin's ``build_request``.
     """
-    request = plugin.build_request(case, model, ctx)
+    if request is None:
+        request = plugin.build_request(case, model, ctx)
     last_error: str | None = None
 
     # `max_retries` is the number of retries AFTER the initial attempt, so the
@@ -324,6 +430,7 @@ async def _send_with_retries(
                 messages=request["messages"],
                 options=request.get("options"),
                 stream=request.get("stream", True),
+                tools=request.get("tools"),
             )
             if resp.error is None:
                 return resp

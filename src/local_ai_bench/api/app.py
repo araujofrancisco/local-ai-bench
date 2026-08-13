@@ -223,8 +223,8 @@ class RunManager:
 
     def on_event(self, status: RunStatus, event: Event) -> None:
         """Apply a runner event to the run's progress state."""
-        if event.kind == Events.CASE_STARTED:
-            status.total += 1
+        if event.kind == Events.RUN_PLANNED:
+            status.total = int(event.data.get("total_cases", 0))
         elif event.kind in (Events.CASE_COMPLETED, Events.CASE_FAILED):
             status.completed += 1
             if event.kind == Events.CASE_FAILED:
@@ -608,7 +608,7 @@ class DeleteRunsRequest(BaseModel):
     run_ids: list[str] = Field(..., min_length=1)
 
 
-@app.post("/api/benchmarks/delete")
+@app.api_route("/api/benchmarks/delete", methods=["POST", "DELETE"])
 async def delete_benchmarks(req: DeleteRunsRequest) -> dict[str, Any]:
     active = _active_run_ids(req.run_ids)
     if active:

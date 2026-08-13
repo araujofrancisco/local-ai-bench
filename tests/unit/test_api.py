@@ -382,6 +382,9 @@ def test_run_status_progress_tracking() -> None:
     manager.on_event(status, Event(Events.RUN_STARTED))
     assert status.status == "running"
 
+    manager.on_event(status, Event(Events.RUN_PLANNED, data={"total_cases": 2}))
+    assert status.total == 2
+
     manager.on_event(status, Event(Events.CASE_STARTED, model="m1", case_id="a"))
     manager.on_event(status, Event(Events.CASE_STARTED, model="m1", case_id="b"))
     manager.on_event(status, Event(Events.CASE_COMPLETED, model="m1", case_id="a"))
@@ -461,6 +464,24 @@ def test_api_batch_delete_benchmarks() -> None:
 
         # Empty batch is rejected by the request validator.
         assert client.post("/api/benchmarks/delete", json={"run_ids": []}).status_code == 422
+
+
+def test_api_batch_delete_accepts_delete_method() -> None:
+    """The bulk endpoint must accept DELETE so the UI can send a single atomic
+    request instead of N concurrent per-run DELETEs (which race on SQLite)."""
+    repo = BenchmarkRepository(_TMP_DB)
+    try:
+        repo.save_run(_make_run("d1", "alpha", "hA", "2026-02-10T00:00:00+00:00"))
+        repo.save_run(_make_run("d2", "beta", "hB", "2026-02-11T00:00:00+00:00"))
+    finally:
+        repo.close()
+
+    with TestClient(app) as client:
+        resp = client.request("DELETE", "/api/benchmarks/delete", json={"run_ids": ["d1", "d2"]})
+        assert resp.status_code == 200
+        assert resp.json()["count"] == 2
+        assert client.get("/api/benchmarks/d1").status_code == 404
+        assert client.get("/api/benchmarks/d2").status_code == 404
 
 
 def test_api_cannot_delete_active_run() -> None:

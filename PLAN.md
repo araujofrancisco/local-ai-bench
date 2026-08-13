@@ -1714,6 +1714,7 @@ The runner should emit structured events:
 
 ```python
 RunStarted
+RunPlanned        # data.total_cases: cumulative planned case-run count
 HostChecked
 ModelDiscovered
 PluginStarted
@@ -1726,6 +1727,11 @@ ContextProbeCompleted
 RunCompleted
 ReportGenerated
 ```
+
+`RunPlanned` carries the cumulative planned number of case-runs (Σ cases ×
+repetitions over selected models and supported plugins), emitted per host after
+it is discovered but before any case runs. It lets progress layers display a
+real total up front instead of accruing it from `CaseStarted`.
 
 These events should power:
 
@@ -2232,17 +2238,17 @@ No core runner changes should be required.
 
 Future plugins may include:
 
-- Agent/tool-use benchmark.
-- Function-calling benchmark.
-- Retrieval-augmented generation benchmark.
-- Multilingual benchmark.
-- Safety/refusal benchmark.
+- ~~Agent/tool-use benchmark~~ ✅ Built-in `agent_tool_use` (v1: multi-turn tool loops with deterministic tool execution, gated on model tool capability).
+- ~~Function-calling benchmark~~ ✅ Built-in `function_calling` (v1: name + args accuracy, gated on model tool capability).
+- ~~Retrieval-augmented generation benchmark~~ ✅ Built-in `rag` (v1: grounded QA with distractor-passage hallucination penalty).
+- ~~Multilingual benchmark~~ ✅ Built-in `multilingual` (v1: in-language comprehension + Unicode-script fidelity across 8 languages, deterministic).
+- ~~Safety/refusal benchmark~~ ✅ Built-in `safety_refusal` (v1: refusal of harmful requests + false-positive refusal checks on benign prompts).
 - Long-document QA benchmark.
-- SQL generation benchmark.
+- ~~SQL generation benchmark~~ ✅ Built-in `sql` (v1: execution-based row comparison against an in-memory SQLite schema, induces correct SELECT generation).
 - Regex generation benchmark.
-- Classification benchmark.
+- ~~Classification benchmark~~ ✅ Built-in `classification` (v1: label-set matching for sentiment/triage/urgency/topic, deterministic).
 - Embedding benchmark, if Ollama embedding endpoints are used.
-- Multi-turn conversation benchmark.
+- ~~Multi-turn conversation benchmark~~ ✅ Built-in `multi_turn` (v1: conversational memory and follow-up comprehension, capped at 4 turns).
 - Robustness benchmark against typos and noisy input.
 
 The plugin architecture must support these without redesign.

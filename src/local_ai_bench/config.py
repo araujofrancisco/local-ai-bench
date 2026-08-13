@@ -76,6 +76,14 @@ class WeightsConfig(BaseModel):
     structured_output: float = 1.0
     long_context: float = 1.0
     multi_context: float = 1.0
+    retrieval: float = 1.0
+    function_calling: float = 1.0
+    multi_turn: float = 1.0
+    agent_tool_use: float = 1.0
+    safety: float = 1.0
+    sql: float = 1.0
+    multilingual: float = 1.0
+    classification: float = 1.0
 
 
 class AppConfig(BaseModel):
@@ -168,6 +176,14 @@ plugins:
     - keyword
     - long_context
     - multi_context
+    - rag
+    - function_calling
+    - multi_turn
+    - agent_tool_use
+    - safety_refusal
+    - sql
+    - multilingual
+    - classification
   # Directory scanned for extra local plugins (.py files, e.g. ./plugins/keyword.py).
   # Inside the Docker container this is the mounted host directory ./plugins -> /app/plugins.
   local_dir: ./plugins
@@ -182,6 +198,14 @@ plugins:
     - reasoning
     - structured_output
     - long_context
+    - rag
+    - function_calling
+    - multi_turn
+    - agent_tool_use
+    - safety_refusal
+    - sql
+    - multilingual
+    - classification
   options:
     coding:
       # WARNING: executing code runs the model's generated solution in an
@@ -206,6 +230,10 @@ plugins:
       expected: "paris"
       context_sizes: [512, 1024, 4096, 8192, 16384]
       contains: true
+    rag:
+      hallucination_penalty: 0.5
+    function_calling:
+      arg_tolerance: 0.5
 
 runner:
   repetitions: 3
@@ -256,6 +284,15 @@ weights:
   reasoning: 1.0
   structured_output: 1.0
   long_context: 1.0
+  multi_context: 1.0
+  retrieval: 1.0
+  function_calling: 1.0
+  multi_turn: 1.0
+  agent_tool_use: 1.0
+  safety: 1.0
+  sql: 1.0
+  multilingual: 1.0
+  classification: 1.0
 """
 
 

@@ -153,14 +153,16 @@ import MainLayout from '../layouts/MainLayout.astro';
     }
 
     function renderProgress(msg, runId) {
+      const terminal = msg.status === 'completed' || msg.status === 'failed';
       progressFill.style.width = `${Math.round((msg.progress || 0) * 100)}%`;
       if (msg.total > 0) {
         progressText.textContent = `Completed ${msg.completed} of ${msg.total} cases (${msg.errors} errors)`;
+      } else if (!terminal) {
+        progressText.textContent = 'Planning benchmark…';
       }
       const detail = [msg.model, msg.plugin, msg.case_id].filter(Boolean).join(' · ');
       if (detail) progressDetail.textContent = detail;
 
-      const terminal = msg.status === 'completed' || msg.status === 'failed';
       if (terminal || msg.type === 'complete') {
         if (poller) clearInterval(poller);
         if (ws) ws.close();

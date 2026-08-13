@@ -98,6 +98,20 @@ def test_orchestrator_plugin_options_defaults_to_config() -> None:
     assert orch._plugin_options_for("coding")["timeout_seconds"] == 7
 
 
+def test_count_case_runs_multiplies_by_repetitions() -> None:
+    cfg = BenchmarkConfig(hosts=[], runner=RunnerConfig(repetitions=4))
+    orch = RunOrchestrator(cfg)
+
+    class _P:
+        id = "counting"
+
+        def cases(self, ctx: Any):  # noqa: ANN001
+            for i in range(3):
+                yield BenchmarkCase(id=f"c{i}", plugin_id="counting", dataset_version="v1", input={})
+
+    assert orch._count_case_runs(_MODEL, _P()) == 12
+
+
 # --- Retry / error-isolation behavior (PLAN §13.5) ---
 
 

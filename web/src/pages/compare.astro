@@ -510,7 +510,12 @@ import MainLayout from '../layouts/MainLayout.astro';
         });
         if (!confirmed) return;
         try {
-          await Promise.all(ids.map((id) => fetch(`/api/benchmarks/${encodeURIComponent(id)}`, { method: 'DELETE' })));
+          const res = await fetch('/api/benchmarks/delete', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ run_ids: ids }),
+          });
+          if (!res.ok) throw new Error(`Delete failed (HTTP ${res.status})`);
           toast('Benchmarks deleted', 'success');
           location.href = '/history';
         } catch (err) {

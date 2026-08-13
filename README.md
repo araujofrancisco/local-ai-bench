@@ -15,8 +15,13 @@ SQLite for comparison. It ships with both a terminal CLI and a web UI
 ## Features
 
 - **Plugin-based benchmarks** — smoke, reasoning, translation, summarization,
-  structured output, coding, vision, and long-context out of the box, plus
-  drop-in local plugins (`.py` files, no core changes).
+  structured output, coding, vision, retrieval-grounded QA, function calling,
+  agent/tool-use, safety/refusal, multi-turn conversation, SQL generation,
+  multilingual, text classification, and long-context out
+  of the box, plus
+  drop-in local plugins (`.py` files, no core changes). Function-calling,
+  agent/tool-use, and vision runs are gated on host-reported model capabilities
+  and skipped otherwise.
 - **Model discovery** — models are auto-detected from each configured host and
   selected with globs or interactively.
 - **Web UI** — dashboard (with a live **Active Runs** panel), run (with live

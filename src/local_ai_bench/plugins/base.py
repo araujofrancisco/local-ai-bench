@@ -25,6 +25,8 @@ class RunContext:
         self.options: dict[str, Any] = dict(options or {})
         self.tmp_dir: str | None = None
         self.judge: Any = None
+        self.transcript: list[dict[str, Any]] = []
+        self.turn_count: int = 0
 
 
 class BenchmarkPlugin(ABC):
@@ -77,3 +79,43 @@ class BenchmarkPlugin(ABC):
 
     async def teardown(self, ctx: RunContext) -> None:
         return None
+
+
+class MultiTurnPlugin(BenchmarkPlugin):
+    """Optional capability: a case is a multi-turn conversation (PLAN §14.3).
+
+    The runner drives up to ``max_turns`` Ollama calls per case attempt. For
+    each turn it calls :meth:`turn_request` (receiving the transcript so far),
+    sends the request, appends the assistant reply to ``ctx.transcript``, and
+    keeps going until the model errors or :meth:`should_stop` returns True.
+    :meth:`evaluate` then scores the run — it can grade the whole conversation
+    through ``ctx.transcript`` (list of ``{"role": "assistant", ...}`` dicts)
+    in addition to the final :class:`ModelResponse`.
+
+    The runner still owns the request/retry/event plumbing, so multi-turn
+    plugins get the same fail-safe isolation as single-shot ones. A case counts
+    once for progress regardless of turn count.
+    """
+
+    max_turns: ClassVar[int] = 5
+
+    @abstractmethod
+    def turn_request(
+        self,
+        case: BenchmarkCase,
+        model: ModelInfo,
+        ctx: RunContext,
+        transcript: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Build the request payload for the next user turn.
+
+        Returns the same shape as :meth:`BenchmarkPlugin.build_request`
+        (``messages``/``options``/``tools``); ``transcript`` holds the turns
+        already completed (assistant replies). The orchestrator appends the
+        reply after sending, so the plugin never reconstructs history.
+        """
+        raise NotImplementedError
+
+    def should_stop(self, case: BenchmarkCase, response: ModelResponse, ctx: RunContext, turn: int) -> bool:
+        """Stop the conversation after this turn? ``turn`` is 0-based."""
+        return turn + 1 >= self.max_turns

@@ -23,6 +23,13 @@ class BenchmarkCategory(StrEnum):
     REASONING = "reasoning"
     STRUCTURED_OUTPUT = "structured_output"
     LONG_CONTEXT = "long_context"
+    RETRIEVAL = "retrieval"
+    FUNCTION_CALLING = "function_calling"
+    MULTI_TURN = "multi_turn"
+    SAFETY = "safety"
+    SQL = "sql"
+    MULTILINGUAL = "multilingual"
+    CLASSIFICATION = "classification"
 
 
 class HostConfig(BaseModel):
@@ -78,6 +85,7 @@ class ModelResponse(BaseModel):
     error: str | None = None
     done_reason: str | None = None
     truncated: bool = False
+    tool_calls: list[dict[str, Any]] | None = None
 
 
 class Evaluation(BaseModel):

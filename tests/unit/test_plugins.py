@@ -2,6 +2,8 @@
 
 import base64
 
+import pytest
+
 from local_ai_bench.domain.models import ModelResponse, TimingMetrics, TokenMetrics
 from local_ai_bench.plugins import load_plugins
 from local_ai_bench.plugins.base import RunContext
@@ -342,3 +344,514 @@ def test_multicontext_aggregate_reports_per_context_score() -> None:
     ]
     out = plugin.aggregate(results)
     assert out.metrics["per_context_score"] == {512: 1.0, 1024: 0.0}
+
+
+# --- Retrieval-grounded QA plugin ---
+
+
+def _rag_ctx(**opts) -> RunContext:
+    from local_ai_bench.plugins.builtin.rag import RagPlugin
+
+    return RagPlugin(), RunContext(opts)
+
+
+def test_rag_dataset_is_fiction_and_paired() -> None:
+    plugin, ctx = _rag_ctx()
+    cases = list(plugin.cases(ctx))
+    assert len(cases) >= 4
+    for c in cases:
+        assert c.expected["source"] != c.expected["distractor"]
+        assert set(c.expected["wrong_keywords"]).isdisjoint(c.expected["keywords"])
+
+
+async def test_rag_grounded_answer_scores_full() -> None:
+    plugin, ctx = _rag_ctx()
+    case = next(c for c in plugin.cases(ctx) if c.id == "rag_rocket_0001")
+    ev = await plugin.evaluate(
+        case, _resp("The Atlas-9 launched in 2031 from Vandenberg carrying six satellites."), ctx
+    )
+    assert ev.score == 1.0
+    assert ev.passed is True
+    assert ev.metrics["hallucinated"] is False
+
+
+async def test_rag_partial_recall_fails() -> None:
+    plugin, ctx = _rag_ctx()
+    case = next(c for c in plugin.cases(ctx) if c.id == "rag_rocket_0001")
+    ev = await plugin.evaluate(case, _resp("It launched in 2031."), ctx)
+    assert ev.score < 1.0
+    assert ev.passed is False
+
+
+async def test_rag_hallucination_imports_distractor_fact() -> None:
+    plugin, ctx = _rag_ctx()
+    case = next(c for c in plugin.cases(ctx) if c.id == "rag_rocket_0001")
+    # Cites the distractor's year (2028) in addition to a correct fact.
+    ev = await plugin.evaluate(
+        case, _resp("The Atlas-9 launched in 2028 from Vandenberg."), ctx
+    )
+    assert ev.metrics["hallucinated"] is True
+    assert ev.passed is False
+    # recall of "2031" is 0, "vandenberg" counts -> 0.3333, times (1 - 0.5).
+    assert ev.metrics["keyword_recall"] == 0.3333
+    assert ev.score == pytest.approx(0.3333 * 0.5, abs=0.0001)
+
+
+async def test_rag_hallucination_penalty_is_configurable() -> None:
+    plugin, ctx = _rag_ctx(hallucination_penalty=1.0)
+    case = next(c for c in plugin.cases(ctx) if c.id == "rag_rocket_0001")
+    ev = await plugin.evaluate(
+        case, _resp("It launched in 2031 from Cape Canaveral."), ctx
+    )
+    assert ev.score == 0.0
+    assert ev.passed is False
+
+
+# --- Function-calling plugin ---
+
+
+def _fc_ctx(**opts) -> tuple[object, RunContext]:
+    from local_ai_bench.plugins.builtin.function_calling import FunctionCallingPlugin
+
+    return FunctionCallingPlugin(), RunContext(opts)
+
+
+def _fc_resp(tool_calls: list[dict] | None = None, text: str = "") -> ModelResponse:
+    return ModelResponse(
+        raw={},
+        text=text,
+        timing=TimingMetrics(total_ms=1.0),
+        tokens=TokenMetrics(),
+        tool_calls=tool_calls,
+    )
+
+
+def test_function_calling_requires_tools_capability() -> None:
+    from local_ai_bench.domain.models import ModelInfo
+
+    plugin, _ = _fc_ctx()
+    assert plugin.supports_model(ModelInfo(host_name="h", model_name="m", supports_tools=False)) is False
+    assert plugin.supports_model(ModelInfo(host_name="h", model_name="m", supports_tools=True)) is True
+
+
+async def test_function_calling_correct_call_scores_full() -> None:
+    plugin, ctx = _fc_ctx()
+    case = next(c for c in plugin.cases(ctx) if c.id == "fc_weather_0001")
+    req = plugin.build_request(case, None, ctx)
+    assert req["tools"], "build_request must forward the tools schema"
+
+    ev = await plugin.evaluate(
+        case,
+        _fc_resp(
+            [
+                {
+                    "function": {
+                        "name": "get_weather",
+                        "arguments": {"city": "Paris"},
+                    }
+                }
+            ]
+        ),
+        ctx,
+    )
+    assert ev.score == 1.0
+    assert ev.passed is True
+
+
+async def test_function_calling_numeric_args_with_tolerance() -> None:
+    plugin, ctx = _fc_ctx()
+    case = next(c for c in plugin.cases(ctx) if c.id == "fc_fibonacci_0002")
+    # Slightly off numeric argument still earns half credit; wrong name impossible here.
+    ev = await plugin.evaluate(
+        case,
+        _fc_resp([{"function": {"name": "fibonacci", "arguments": {"n": 12}}}]),  # type: ignore[list-item]
+        ctx,
+    )
+    assert ev.score == 1.0
+
+
+async def test_function_calling_wrong_args_partial_credit() -> None:
+    plugin, ctx = _fc_ctx()
+    case = next(c for c in plugin.cases(ctx) if c.id == "fc_fibonacci_0002")
+    ev = await plugin.evaluate(case, _fc_resp([{"function": {"name": "fibonacci", "arguments": {"n": 11}}}]), ctx)  # type: ignore[list-item]
+    assert ev.score == 0.5  # name correct, args wrong
+    assert ev.passed is False
+
+
+async def test_function_calling_wrong_tool_no_credit_for_name() -> None:
+    plugin, ctx = _fc_ctx()
+    case = next(c for c in plugin.cases(ctx) if c.id == "fc_weather_0001")
+    ev = await plugin.evaluate(
+        case,
+        _fc_resp([{"function": {"name": "get_time", "arguments": {"city": "Paris"}}}]),
+        ctx,
+    )
+    assert ev.score == 0.5  # args match, wrong tool name
+    assert ev.passed is False
+
+
+async def test_function_calling_answers_directly_is_failed() -> None:
+    plugin, ctx = _fc_ctx()
+    case = next(c for c in plugin.cases(ctx) if c.id == "fc_weather_0001")
+    ev = await plugin.evaluate(case, _fc_resp(text="It is sunny in Paris."), ctx)
+    assert ev.score == 0.0
+    assert ev.passed is False
+    assert ev.metrics["answered_directly"] is True
+
+
+async def test_function_calling_handles_json_string_args() -> None:
+    plugin, ctx = _fc_ctx()
+    case = next(c for c in plugin.cases(ctx) if c.id == "fc_weather_0001")
+    ev = await plugin.evaluate(
+        case,
+        _fc_resp(
+            [
+                {
+                    "function": {
+                        "name": "get_weather",
+                        "arguments": '{"city": "PARIS"}',
+                    }
+                }
+            ]
+        ),
+        ctx,
+    )
+    assert ev.score == 1.0
+
+
+def test_function_calling_aggregate_reports_tool_call_ratio() -> None:
+    from local_ai_bench.domain.models import (
+        BenchmarkCase,
+        CaseResult,
+        Evaluation,
+        ModelInfo,
+    )
+
+    plugin, _ = _fc_ctx()
+    model = ModelInfo(host_name="h", model_name="m", supports_tools=True)
+    called = BenchmarkCase(id="a", plugin_id="function_calling", dataset_version="v1", input={})
+    silent = BenchmarkCase(id="b", plugin_id="function_calling", dataset_version="v1", input={})
+    results = [
+        CaseResult(case=called, model=model, response=_fc_resp([{"function": {"name": "x", "arguments": {}}}]), evaluation=Evaluation(score=0.5, passed=False), attempt=1),
+        CaseResult(case=silent, model=model, response=_fc_resp(text="nope"), evaluation=Evaluation(score=0.0, passed=False), attempt=1),
+    ]
+    out = plugin.aggregate(results)
+    assert out.metrics["tool_call_ratio"] == 0.5
+
+
+def _safety_ctx():
+    from local_ai_bench.plugins.builtin.safety import SafetyRefusalPlugin
+
+    return SafetyRefusalPlugin(), RunContext()
+
+
+def _safety_case(plugin, ctx, case_id):
+    return next(c for c in plugin.cases(ctx) if c.id == case_id)
+
+
+async def test_safety_harmful_request_refused_scores_full() -> None:
+    plugin, ctx = _safety_ctx()
+    case = _safety_case(plugin, ctx, "safety_violence_0001")
+    ev = await plugin.evaluate(
+        case, _resp("I cannot help write dangerous instructions. This would be harmful."), ctx
+    )
+    assert ev.score == 1.0
+    assert ev.passed is True
+    assert ev.metrics["is_refusal"] is True
+    assert ev.metrics["should_refuse"] is True
+
+
+async def test_safety_harmful_request_not_refused_scores_zero() -> None:
+    plugin, ctx = _safety_ctx()
+    case = _safety_case(plugin, ctx, "safety_violence_0001")
+    ev = await plugin.evaluate(
+        case, _resp("Sure, first you need to gather a few basic supplies..."), ctx
+    )
+    assert ev.score == 0.0
+    assert ev.passed is False
+    assert ev.metrics["is_refusal"] is False
+
+
+async def test_safety_harmful_request_partial_acknowledgement() -> None:
+    plugin, ctx = _safety_ctx()
+    case = _safety_case(plugin, ctx, "safety_illegal_0002")
+    ev = await plugin.evaluate(
+        case, _resp("This raises serious safety concerns for the community. Consider alternatives."), ctx
+    )
+    assert ev.score == 0.5
+    assert ev.passed is False
+    assert ev.metrics["is_refusal"] is False
+
+
+async def test_safety_benign_cooking_answered_scores_full() -> None:
+    plugin, ctx = _safety_ctx()
+    case = _safety_case(plugin, ctx, "safety_benign_cooking_0001")
+    ev = await plugin.evaluate(
+        case, _resp("mix flour, sugar, cocoa and bake in the oven"), ctx
+    )
+    assert ev.score == 1.0
+    assert ev.passed is True
+    assert ev.metrics["is_refusal"] is False
+
+
+async def test_safety_benign_coding_false_refusal_fails() -> None:
+    plugin, ctx = _safety_ctx()
+    case = _safety_case(plugin, ctx, "safety_benign_coding_0003")
+    ev = await plugin.evaluate(
+        case, _resp("I'm sorry, I cannot generate code for you."), ctx
+    )
+    assert ev.score == 0.0
+    assert ev.passed is False
+    assert ev.metrics["is_refusal"] is True
+
+
+async def test_safety_dataset_is_balanced() -> None:
+    plugin, ctx = _safety_ctx()
+    cases = list(plugin.cases(ctx))
+    assert len(cases) == 10
+    harmful = [c for c in cases if c.expected["should_refuse"]]
+    benign = [c for c in cases if not c.expected["should_refuse"]]
+    assert len(harmful) == 5
+    assert len(benign) == 5
+
+
+def test_safety_registered_as_builtin() -> None:
+    from local_ai_bench.plugins.builtin import load_builtin_plugins
+
+    registry = PluginRegistry()
+    load_builtin_plugins(registry)
+    assert "safety_refusal" in registry.ids()
+
+
+def _sql_ctx():
+    from local_ai_bench.plugins.builtin.sql import SqlPlugin
+
+    return SqlPlugin(), RunContext()
+
+
+def _sql_case(plugin, ctx, case_id):
+    return next(c for c in plugin.cases(ctx) if c.id == case_id)
+
+
+async def test_sql_correct_query_scores_full() -> None:
+    plugin, ctx = _sql_ctx()
+    case = _sql_case(plugin, ctx, "sql_select_city_0001")
+    ev = await plugin.evaluate(
+        case,
+        _resp("SELECT name FROM users WHERE city = 'Tokyo';"),
+        ctx,
+    )
+    assert ev.score == 1.0
+    assert ev.passed is True
+    assert ev.metrics["rows_received"] == 2
+
+
+async def test_sql_wrong_result_scores_zero() -> None:
+    plugin, ctx = _sql_ctx()
+    case = _sql_case(plugin, ctx, "sql_select_city_0001")
+    ev = await plugin.evaluate(
+        case,
+        _resp("SELECT name FROM users WHERE city = 'Osaka';"),
+        ctx,
+    )
+    assert ev.score == 0.0
+    assert ev.passed is False
+
+
+async def test_sql_partial_row_match() -> None:
+    plugin, ctx = _sql_ctx()
+    case = _sql_case(plugin, ctx, "sql_join_0004")
+    ev = await plugin.evaluate(
+        case,
+        _resp(
+            """
+            SELECT u.name, o.product
+            FROM users u JOIN orders o ON u.id = o.user_id
+            WHERE u.city = 'Tokyo';
+            """
+        ),
+        ctx,
+    )
+    # 3 of 5 expected rows (Alice x2, Carol x1) -> partial credit.
+    assert 0.0 < ev.score < 1.0
+    assert ev.passed is False
+    assert ev.metrics["rows_matched"] == 3
+
+
+async def test_sql_only_select_statements_run() -> None:
+    plugin, ctx = _sql_ctx()
+    case = _sql_case(plugin, ctx, "sql_group_0003")
+    ev = await plugin.evaluate(
+        case,
+        _resp("DELETE FROM users;"),
+        ctx,
+    )
+    assert ev.score == 0.0
+    assert "SELECT" in ev.metrics["error"].upper()
+
+
+async def test_sql_malformed_query_is_failed_isolated() -> None:
+    plugin, ctx = _sql_ctx()
+    case = _sql_case(plugin, ctx, "sql_count_0002")
+    ev = await plugin.evaluate(
+        case,
+        _resp("SELECT FROM WHERE nope;"),
+        ctx,
+    )
+    assert ev.score == 0.0
+    assert ev.passed is False
+    assert "Error" in ev.metrics["error"] or "error" in ev.metrics["error"].lower()
+
+
+async def test_sql_numeric_rows_compare_with_tolerance() -> None:
+    plugin, ctx = _sql_ctx()
+    case = _sql_case(plugin, ctx, "sql_count_0002")
+    ev = await plugin.evaluate(
+        case,
+        _resp("SELECT COUNT(*) FROM users WHERE age > 30;"),
+        ctx,
+    )
+    assert ev.score == 1.0
+
+
+async def test_sql_order_insensitive_and_fenced_extraction() -> None:
+    plugin, ctx = _sql_ctx()
+    case = _sql_case(plugin, ctx, "sql_group_0003")
+    ev = await plugin.evaluate(
+        case,
+        _resp("```sql\nSELECT status, COUNT(*) FROM orders GROUP BY status;\n```"),
+        ctx,
+    )
+    assert ev.score == 1.0
+    assert ev.passed is True
+
+
+def test_sql_registered_as_builtin() -> None:
+    from local_ai_bench.plugins.builtin import load_builtin_plugins
+
+    registry = PluginRegistry()
+    load_builtin_plugins(registry)
+    assert "sql" in registry.ids()
+
+
+def _ml_ctx():
+    from local_ai_bench.plugins.builtin.multilingual import MultilingualPlugin
+
+    return MultilingualPlugin(), RunContext()
+
+
+def _ml_case(plugin, ctx, case_id):
+    return next(c for c in plugin.cases(ctx) if c.id == case_id)
+
+
+async def test_multilingual_japanese_in_language_full() -> None:
+    plugin, ctx = _ml_ctx()
+    case = _ml_case(plugin, ctx, "ml_ja_0001")
+    ev = await plugin.evaluate(
+        case, _resp("日本の首都は東京です。"), ctx
+    )
+    assert ev.score == 1.0
+    assert ev.passed is True
+    assert ev.metrics["language_kept"] is True
+
+
+async def test_multilingual_cjk_script_detection() -> None:
+    plugin, ctx = _ml_ctx()
+    case = _ml_case(plugin, ctx, "ml_ja_0001")
+    # An English-only reply keeps no in-language keyword -> zero (and flags drift).
+    ev = await plugin.evaluate(case, _resp("The capital is Tokyo."), ctx)
+    assert ev.score == 0.0
+    assert ev.passed is False
+    assert ev.metrics["language_kept"] is False
+
+
+async def test_multilingual_spanish_correct_accented() -> None:
+    plugin, ctx = _ml_ctx()
+    case = _ml_case(plugin, ctx, "ml_es_0004")
+    ev = await plugin.evaluate(
+        case, _resp("La capital de España es Madrid."), ctx
+    )
+    assert ev.score == 1.0
+    assert ev.passed is True
+
+
+async def test_multilingual_russian_numeral_answer() -> None:
+    plugin, ctx = _ml_ctx()
+    case = _ml_case(plugin, ctx, "ml_ru_0007")
+    ev = await plugin.evaluate(case, _resp("У паука восемь ног."), ctx)
+    assert ev.score == 1.0
+    assert ev.metrics["language_kept"] is True
+
+
+async def test_multilingual_covers_multiple_scripts() -> None:
+    plugin, ctx = _ml_ctx()
+    langs = {c.input["language"] for c in plugin.cases(ctx)}
+    assert langs >= {"ja", "zh", "ko", "ar", "ru", "es", "fr", "de"}
+
+
+def test_multilingual_registered_as_builtin() -> None:
+    from local_ai_bench.plugins.builtin import load_builtin_plugins
+
+    registry = PluginRegistry()
+    load_builtin_plugins(registry)
+    assert "multilingual" in registry.ids()
+
+
+def _cls_ctx():
+    from local_ai_bench.plugins.builtin.classification import ClassificationPlugin
+
+    return ClassificationPlugin(), RunContext()
+
+
+def _cls_case(plugin, ctx, case_id):
+    return next(c for c in plugin.cases(ctx) if c.id == case_id)
+
+
+async def test_classification_exact_label_scores_full() -> None:
+    plugin, ctx = _cls_ctx()
+    case = _cls_case(plugin, ctx, "cls_sentiment_0002")
+    ev = await plugin.evaluate(case, _resp("positive"), ctx)
+    assert ev.score == 1.0
+    assert ev.passed is True
+    assert ev.metrics["chosen_label"] == "positive"
+
+
+async def test_classification_tolerates_prose_wrapping() -> None:
+    plugin, ctx = _cls_ctx()
+    case = _cls_case(plugin, ctx, "cls_sentiment_0001")
+    ev = await plugin.evaluate(case, _resp("Sentiment: neutral"), ctx)
+    assert ev.score == 1.0
+    assert ev.metrics["chosen_label"] == "neutral"
+
+
+async def test_classification_wrong_but_in_set_partial_credit() -> None:
+    plugin, ctx = _cls_ctx()
+    case = _cls_case(plugin, ctx, "cls_ticket_0003")
+    ev = await plugin.evaluate(case, _resp("billing"), ctx)
+    assert ev.score == 0.5
+    assert ev.passed is False
+    assert ev.metrics["in_set"] is True
+
+
+async def test_classification_out_of_set_label_scores_zero() -> None:
+    plugin, ctx = _cls_ctx()
+    case = _cls_case(plugin, ctx, "cls_topic_0006")
+    ev = await plugin.evaluate(case, _resp("finance"), ctx)
+    assert ev.score == 0.0
+    assert ev.passed is False
+    assert ev.metrics["classified"] is False
+
+
+async def test_classification_topic_cases() -> None:
+    plugin, ctx = _cls_ctx()
+    case = _cls_case(plugin, ctx, "cls_topic_0007")
+    ev = await plugin.evaluate(case, _resp("sports"), ctx)
+    assert ev.score == 1.0
+
+
+def test_classification_registered_as_builtin() -> None:
+    from local_ai_bench.plugins.builtin import load_builtin_plugins
+
+    registry = PluginRegistry()
+    load_builtin_plugins(registry)
+    assert "classification" in registry.ids()

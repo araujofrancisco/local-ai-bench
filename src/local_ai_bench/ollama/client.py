@@ -64,9 +64,10 @@ class OllamaClient:
         messages: list[dict[str, Any]],
         options: dict[str, Any] | None = None,
         stream: bool = True,
+        tools: list[dict[str, Any]] | None = None,
     ) -> ModelResponse:
         """POST /api/chat. Returns a ModelResponse with timing/token metrics."""
-        payload = _build_payload(model, messages, options, stream)
+        payload = _build_payload(model, messages, options, stream, tools)
         started_at = time.monotonic()
         raw: dict[str, Any] = {}
 
@@ -91,6 +92,7 @@ class OllamaClient:
             tokens=tokens,
             done_reason=done_reason,
             truncated=done_reason == "length",
+            tool_calls=(done.get("message") or {}).get("tool_calls") if done else None,
         )
 
     async def _stream_chat(
@@ -98,6 +100,7 @@ class OllamaClient:
     ) -> tuple[str, dict[str, Any], float]:
         parts: list[str] = []
         done_chunk: dict[str, Any] = {}
+        tool_calls: list[dict[str, Any]] | None = None
         first_token_at: float | None = None
         wall_ms = 0.0
         async with self._client.stream(
@@ -115,9 +118,16 @@ class OllamaClient:
                     if first_token_at is None:
                         first_token_at = time.monotonic()
                     parts.append(delta)
+                chunk_tools = chunk.get("message", {}).get("tool_calls")
+                if chunk_tools:
+                    tool_calls = chunk_tools  # tool calls arrive before the done chunk
                 if chunk.get("done"):
                     done_chunk = chunk
                     wall_ms = (time.monotonic() - started_at) * 1000.0
+        if tool_calls:
+            message = done_chunk.get("message") or {}
+            message["tool_calls"] = tool_calls
+            done_chunk["message"] = message
         return "".join(parts), done_chunk, wall_ms
 
 
@@ -126,6 +136,7 @@ def _build_payload(
     messages: list[dict[str, Any]],
     options: dict[str, Any] | None,
     stream: bool,
+    tools: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "model": model,
@@ -133,6 +144,8 @@ def _build_payload(
         "options": options or {},
         "stream": stream,
     }
+    if tools:
+        payload["tools"] = tools
     return payload
 
 

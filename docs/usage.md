@@ -127,7 +127,11 @@ The UI is served at the backend root (default `http://localhost:8000`).
 
 The benchmark runs **in the background** on the server (a detached task) so you
 can navigate away freely. Progress is streamed over a per-run WebSocket
-(`/ws?run_id=<id>`) with a status-polling fallback. The run also appears in the
+(`/ws?run_id=<id>`) with a status-polling fallback. The progress bar shows the
+**planned total** number of cases up front — once the host is discovered and
+the run plan is computed, it displays `Completed X of Y cases` where `Y` stays
+fixed for the rest of the run (no more "total" climbing alongside completions).
+The run also appears in the
 Dashboard **Active Runs** panel and History (with a running/queued status chip)
 from any page.
 

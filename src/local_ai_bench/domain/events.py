@@ -30,6 +30,7 @@ class Events:
     """Event kind constants (mirrors the event stream in PLAN.md §19.6)."""
 
     RUN_STARTED = "RunStarted"
+    RUN_PLANNED = "RunPlanned"
     HOST_CHECKED = "HostChecked"
     MODEL_DISCOVERED = "ModelDiscovered"
     PLUGIN_STARTED = "PluginStarted"
