@@ -1,6 +1,6 @@
 # Local-AI-Bench
 
-Local-first, plugin-based LLM benchmarking for [Ollama](https://ollama.com)
+Local-first, plugin-based LLM benchmarking for OpenAI-Compatible API
 hosts on your own network.
 
 Local-AI-Bench discovers models from one or more Ollama hosts, runs configurable
