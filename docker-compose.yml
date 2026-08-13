@@ -7,8 +7,10 @@ services:
       - "8000:8000"
     environment:
       - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
-      - DATABASE_URL=/data/benchmark.db
-      - CONFIG_PATH=/config/default.yaml
+      - DATABASE_URL=${DATABASE_URL:-/data/benchmark.db}
+      - CONFIG_PATH=${CONFIG_PATH:-/config/default.yaml}
+      - STATIC_DIR=${STATIC_DIR:-/app/static}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
     volumes:
       - ./config:/config
       - ./data:/data

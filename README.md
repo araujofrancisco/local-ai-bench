@@ -60,11 +60,14 @@ SQLite for comparison. It ships with both a terminal CLI and a web UI
 ```bash
 git clone <repo-url> local-ai-bench
 cd local-ai-bench
+cp .env.example .env    # optional: override OLLAMA_HOST / CORS_ORIGINS etc.
 docker compose up -d --build
 ```
 
-The shipped `config/default.yaml` needs no changes: it omits `hosts` and
-docker-compose points `OLLAMA_HOST` at your host machine's Ollama.
+The shipped `config/default.yaml` needs no changes: it omits `hosts` and the
+container points `OLLAMA_HOST` at your Ollama (see `.env`; on Linux Docker
+Engine set it to your host's LAN address since `host.docker.internal` does not
+resolve).
 
 Open <http://localhost:8000>.
 

@@ -19,6 +19,7 @@ survive restarts.
 ```bash
 git clone <repo-url> local-ai-bench
 cd local-ai-bench
+cp .env.example .env     # adjust OLLAMA_HOST etc. for your setup
 docker compose up -d --build
 ```
 
@@ -39,8 +40,10 @@ services:
       - "8000:8000"
     environment:
       - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
-      - DATABASE_URL=/data/benchmark.db
-      - CONFIG_PATH=/config/default.yaml
+      - DATABASE_URL=${DATABASE_URL:-/data/benchmark.db}
+      - CONFIG_PATH=${CONFIG_PATH:-/config/default.yaml}
+      - STATIC_DIR=${STATIC_DIR:-/app/static}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
     volumes:
       - ./config:/config
       - ./data:/data
@@ -50,13 +53,19 @@ services:
 
 ### Environment variables
 
+All variables are read from a `.env` file in the project root (Docker Compose
+loads it automatically; `cp .env.example .env` to start). Values you don't set
+fall back to the defaults below. `.env` is git-ignored — use `.env.example` for
+the documented template.
+
 | Variable | Default | Purpose |
 | --- | --- | --- |
+| `OLLAMA_HOST` | `http://host.docker.internal:11434` | Ollama base URL used when the config file omits the `hosts` section (the recommended default). Point this at the host machine's Ollama. On Linux Docker Engine `host.docker.internal` does not resolve — set this to your real host (e.g. `http://192.168.10.108:11434`). |
 | `CONFIG_PATH` | `config/default.yaml` | Path to the YAML configuration inside the container. |
 | `DATABASE_URL` | `benchmark.db` | Path to the SQLite database file. |
 | `STATIC_DIR` | `/app/static` | Where the compiled frontend assets live. |
 | `CORS_ORIGINS` | `*` | Comma-separated CORS allow-list. Lock this down in production. |
-| `OLLAMA_HOST` | `http://host.docker.internal:11434` | Ollama base URL used when the config file omits the `hosts` section (the recommended default). Point this at the host machine's Ollama. |
+| `LOG_FILE` | `logs/local-ai-bench.log` | Optional: where backend logs are written. |
 
 ### Volumes
 
