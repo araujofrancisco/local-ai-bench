@@ -358,7 +358,7 @@ class BenchmarkRepository:
             dict(row)
             for row in self._conn.execute(
                 """
-                SELECT r.timestamp, r.run_id, m.overall_score, m.latency_p50_ms,
+                SELECT r.timestamp, r.run_id, m.host_name, m.overall_score, m.latency_p50_ms,
                        m.latency_p95_ms, m.tokens_per_second, m.cases_run, m.errors
                 FROM models m
                 JOIN runs r ON r.run_id = m.run_id
@@ -407,7 +407,7 @@ class BenchmarkRepository:
             where = f"m.run_id IN ({placeholders})"
             select = (
                 "m.run_id AS run_id, r.timestamp AS run_created_at, "
-                "m.model_name, m.overall_score, m.latency_p50_ms, m.latency_p95_ms, "
+                "m.model_name, m.host_name, m.overall_score, m.latency_p50_ms, m.latency_p95_ms, "
                 "m.time_to_first_token_p50_ms, m.tokens_per_second, m.cases_run, m.errors, "
                 "m.max_context_tokens AS max_context_tokens, "
                 "m.context_recommendation AS context_recommendation"
@@ -418,7 +418,7 @@ class BenchmarkRepository:
             where = "m.run_id = ?"
             select = (
                 "m.run_id AS run_id, "
-                "m.model_name, m.overall_score, m.latency_p50_ms, m.latency_p95_ms, "
+                "m.model_name, m.host_name, m.overall_score, m.latency_p50_ms, m.latency_p95_ms, "
                 "m.time_to_first_token_p50_ms, m.tokens_per_second, m.cases_run, m.errors, "
                 "m.max_context_tokens AS max_context_tokens, "
                 "m.context_recommendation AS context_recommendation"
@@ -429,7 +429,7 @@ class BenchmarkRepository:
             where = ""
             select = (
                 "m.run_id AS run_id, "
-                "m.model_name, m.overall_score, m.latency_p50_ms, m.latency_p95_ms, "
+                "m.model_name, m.host_name, m.overall_score, m.latency_p50_ms, m.latency_p95_ms, "
                 "m.time_to_first_token_p50_ms, m.tokens_per_second, m.cases_run, m.errors, "
                 "m.max_context_tokens AS max_context_tokens, "
                 "m.context_recommendation AS context_recommendation"

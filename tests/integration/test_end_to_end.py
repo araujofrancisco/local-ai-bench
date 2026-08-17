@@ -94,6 +94,30 @@ def test_run_planned_reports_exact_total_before_cases_run() -> None:
     ), "planned total must be announced before any case completes"
 
 
+def test_multi_host_run_with_host_filter() -> None:
+    """With several configured hosts, a host filter targets only the selected
+    server(s); reports reflect the hosts that actually ran."""
+    cfg = BenchmarkConfig(
+        hosts=[
+            HostConfig(name="a", base_url="http://a.ollama"),
+            HostConfig(name="b", base_url="http://b.ollama"),
+        ],
+        runner={"repetitions": 1, "warmup_runs": 0, "max_retries": 0},
+    )
+    orch = RunOrchestrator(
+        cfg,
+        plugins=[SmokePlugin()],
+        run_id="e2e-multi",
+        host_filter=lambda h: h.name == "a",  # noqa: E731
+        client_transport=mock_transport(),
+    )
+    result = asyncio.run(orch.run())
+
+    assert result.errors == []
+    assert [h.name for h in result.hosts] == ["a"]
+    assert result.models and {m.host_name for m in result.models} == {"a"}
+
+
 def test_function_calling_stream_captures_tool_calls() -> None:
     """Tool calls emitted mid-stream must survive into ModelResponse and score."""
     from local_ai_bench.plugins.builtin.function_calling import FunctionCallingPlugin

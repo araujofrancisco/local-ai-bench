@@ -127,6 +127,19 @@ def test_repository_round_trip_persists_cases() -> None:
     repo.close()
 
 
+def test_get_model_history_includes_host() -> None:
+    """Per-model history rows carry the host so duplicate names across servers
+    stay distinguishable (powers the `history --model` CLI table)."""
+    repo = BenchmarkRepository(_TMP_DB)
+    repo.save_run(_sample_run())
+    try:
+        rows = repo.get_model_history("m1")
+        assert rows and rows[0]["host_name"] == "h1"
+        assert rows[0]["run_id"] == "run123"
+    finally:
+        repo.close()
+
+
 def test_api_health() -> None:
     with TestClient(app) as client:
         resp = client.get("/api/health")
@@ -246,6 +259,7 @@ def test_api_get_benchmark_found_and_missing() -> None:
         ok = client.get("/api/benchmarks/run123")
         assert ok.status_code == 200
         assert ok.json()["models"][0]["model_name"] == "m1"
+        assert ok.json()["models"][0]["host_name"] == "h1"
 
         missing = client.get("/api/benchmarks/nope")
         assert missing.status_code == 404
@@ -289,6 +303,7 @@ def test_api_compare_unscoped_includes_per_plugin_aggregates() -> None:
         assert resp.status_code == 200
         for m in resp.json()["models"]:
             assert m["run_id"] is not None
+            assert m["host_name"], "compare rows must carry the host name"
             assert m["plugins"], "unscoped compare rows must carry per-plugin data"
             assert m["plugins"][0]["plugin_id"] == "smoke"
             assert m["plugins"][0]["score"] is not None

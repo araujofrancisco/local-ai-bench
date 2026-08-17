@@ -1,10 +1,11 @@
-"""Model selection — CLI flags and interactive picking over autodetected models."""
+"""Selection — CLI flags and interactive picking over hosts and models."""
 
 from __future__ import annotations
 
 import fnmatch
+from collections.abc import Callable
 
-from local_ai_bench.domain.models import ModelInfo
+from local_ai_bench.domain.models import HostConfig, ModelInfo
 
 DEFAULT_HOST_NAME = "local"
 DEFAULT_HOST_URL = "http://127.0.0.1:11434"
@@ -40,24 +41,54 @@ def filter_models(
     ]
 
 
+def pick_hosts(hosts: list[HostConfig]) -> list[HostConfig]:
+    """Ask the user to choose hosts by index/range from a numbered list."""
+    return _pick_from(
+        hosts,
+        title="Available hosts",
+        label=lambda h: f"{h.name} ({h.base_url})",
+        prompt="Select hosts (indices or ranges, e.g. 0 2-4)",
+    )
+
+
 def pick_interactive(models: list[ModelInfo]) -> list[ModelInfo]:
     """Ask the user to choose models by index/range from a numbered list."""
-    if not models:
+    return _pick_from(
+        models,
+        title="Available models",
+        label=lambda m: m.model_name,
+        prompt="Select models (indices or ranges, e.g. 0 2-4)",
+    )
+
+
+def _pick_from[T](
+    items: list[T],
+    *,
+    title: str,
+    label: Callable[[T], str],
+    prompt: str,
+) -> list[T]:
+    """Shared numbered picker: print ``items``, then resolve an index/range spec.
+
+    ``(a)`` selects everything, ``(q)`` / empty input selects nothing. The label
+    callable renders each item in the numbered listing.
+    """
+    if not items:
         return []
-    print("Available models:")
-    for i, m in enumerate(models):
-        print(f"  [{i}] {m.model_name}")
+    print(title + ":")
+    for i, item in enumerate(items):
+        print(f"  [{i}] {label(item)}")
     print("  (a) all / (q) quit")
-    raw = input("Select models (indices or ranges, e.g. 0 2-4): ").strip().lower()
+    raw = input(f"{prompt}: ").strip().lower()
     if raw in {"", "q"}:
         return []
     if raw == "a":
-        return list(models)
-    return _resolve_indices(models, raw)
+        return list(items)
+    return _resolve_indices(items, raw)
 
 
-def _resolve_indices(models: list[ModelInfo], raw: str) -> list[ModelInfo]:
-    """Return the models selected by a spec like '0 2-4' (indices/ranges)."""
+def _resolve_indices[T](items: list[T], raw: str) -> list[T]:
+    """Return the items selected by a spec like '0 2-4' (indices/ranges)."""
     selected: set[int] = set()
     for part in raw.replace(",", " ").split():
         if "-" in part:
@@ -71,4 +102,4 @@ def _resolve_indices(models: list[ModelInfo], raw: str) -> list[ModelInfo]:
                 selected.add(int(part))
             except ValueError:
                 continue
-    return [m for i, m in enumerate(models) if i in selected]
+    return [item for i, item in enumerate(items) if i in selected]

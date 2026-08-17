@@ -40,6 +40,8 @@ services:
       - "8000:8000"
     environment:
       - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
+      - LAB_SERVER_URL=${LAB_SERVER_URL:-}
+      - GPU_NODE_URL=${GPU_NODE_URL:-}
       - DATABASE_URL=${DATABASE_URL:-/data/benchmark.db}
       - CONFIG_PATH=${CONFIG_PATH:-/config/default.yaml}
       - STATIC_DIR=${STATIC_DIR:-/app/static}
@@ -60,7 +62,8 @@ the documented template.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `OLLAMA_HOST` | `http://host.docker.internal:11434` | Ollama base URL used when the config file omits the `hosts` section (the recommended default). Point this at the host machine's Ollama. On Linux Docker Engine `host.docker.internal` does not resolve — set this to your real host (e.g. `http://192.168.10.108:11434`). |
+| `OLLAMA_HOST` | `http://host.docker.internal:11434` | Ollama base URL for the `local` host entry in the config, expanded from `${OLLAMA_HOST:-...}`. Point this at the host machine's Ollama. On Linux Docker Engine `host.docker.internal` does not resolve — set this to your real host (e.g. `http://192.168.10.108:11434`). |
+| `LAB_SERVER_URL` | *(unset)* | Optional second server; referenced by the commented `lab-server` host entry (`${LAB_SERVER_URL}`). Add matching `LAB_SERVER_URL` / `GPU_NODE_URL` pairs per host entry. |
 | `CONFIG_PATH` | `config/default.yaml` | Path to the YAML configuration inside the container. |
 | `DATABASE_URL` | `benchmark.db` | Path to the SQLite database file. |
 | `STATIC_DIR` | `/app/static` | Where the compiled frontend assets live. |
@@ -81,21 +84,26 @@ the documented template.
 
 The container uses `config/default.yaml` mounted from the host directory.
 
-The recommended starting point **omits** `hosts` entirely — the app then uses
-`$OLLAMA_HOST` (set by docker-compose to the host machine's Ollama) or falls
-back to the local `http://127.0.0.1:11434`:
-
-```yaml
-# hosts omitted -> uses $OLLAMA_HOST / 127.0.0.1:11434
-```
-
-To benchmark a specific machine (for example another host on your LAN), list
-it explicitly:
+The container uses `config/default.yaml` mounted from the host directory. The
+shipped default lists a `local` host that resolves to `$OLLAMA_HOST` (set by
+docker-compose to the host machine's Ollama) or falls back to the local
+`http://127.0.0.1:11434`:
 
 ```yaml
 hosts:
+  - name: local
+    base_url: ${OLLAMA_HOST:-http://127.0.0.1:11434}
+```
+
+To benchmark another machine (for example another host on your LAN), uncomment
+a host entry and set the env var it references:
+
+```yaml
+hosts:
+  - name: local
+    base_url: ${OLLAMA_HOST:-http://127.0.0.1:11434}
   - name: lab-server
-    base_url: http://host.docker.internal:11434   # from inside Docker
+    base_url: ${LAB_SERVER_URL}          # e.g. LAB_SERVER_URL=http://192.168.10.109:11434
     timeout_seconds: 300
 ```
 
@@ -103,6 +111,11 @@ On Docker Desktop (Windows/macOS) `host.docker.internal` resolves to the host
 machine automatically. On Linux Docker Engine add
 `extra_hosts: ["host.docker.internal:host-gateway"]` to the service if you need
 that name, or simply use your machine's LAN IP.
+
+Multiple servers are supported: benchmark all of them, or narrow a run with
+`run --interactive` (pick hosts, then models) or by editing the config. A host
+whose required env var is unset fails config loading with a clear message —
+comment the entry out to disable that server.
 
 Models are **not** listed in the config — they are auto-discovered from each
 host at run time and selected in the UI or via `--models` flags.

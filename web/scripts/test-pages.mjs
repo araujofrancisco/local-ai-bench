@@ -72,11 +72,11 @@ const API = {
     filters: { models: ['m1'], hosts: ['lab-server'] },
   },
   '/api/compare': {
-    models: [{ model_name: 'm1', overall_score: 0.9, latency_p50_ms: 10, latency_p95_ms: 20, time_to_first_token_p50_ms: 5, tokens_per_second: 50, cases_run: 2, errors: 0 }],
+    models: [{ model_name: 'm1', host_name: 'lab-server', overall_score: 0.9, latency_p50_ms: 10, latency_p95_ms: 20, time_to_first_token_p50_ms: 5, tokens_per_second: 50, cases_run: 2, errors: 0 }],
   },
   '/api/compare?run=r1': {
     models: [
-      { model_name: 'm1', run_id: 'r1', overall_score: 0.9,
+      { model_name: 'm1', host_name: 'lab-server', run_id: 'r1', overall_score: 0.9,
         latency_p50_ms: 10, latency_p95_ms: 20, time_to_first_token_p50_ms: 5,
         tokens_per_second: 50, cases_run: 2, errors: 0,
         plugins: [
@@ -86,8 +86,8 @@ const API = {
   },
   '/api/compare?run=r1&run=r2': {
     models: [
-      { model_name: 'm1', run_id: 'r1', overall_score: 0.9, latency_p50_ms: 10, latency_p95_ms: 20, time_to_first_token_p50_ms: 5, tokens_per_second: 50, cases_run: 2, errors: 0, plugins: [{ plugin_id: 'smoke', score: 0.9, latency_p50_ms: 10, time_to_first_token_p50_ms: 5, tokens_per_second: 50, cases_run: 2 }] },
-      { model_name: 'm2', run_id: 'r2', overall_score: 0.8, latency_p50_ms: 30, latency_p95_ms: 40, time_to_first_token_p50_ms: 15, tokens_per_second: 20, cases_run: 2, errors: 0, plugins: [{ plugin_id: 'smoke', score: 0.8, latency_p50_ms: 30, time_to_first_token_p50_ms: 15, tokens_per_second: 20, cases_run: 2 }] },
+      { model_name: 'm1', host_name: 'lab-server', run_id: 'r1', overall_score: 0.9, latency_p50_ms: 10, latency_p95_ms: 20, time_to_first_token_p50_ms: 5, tokens_per_second: 50, cases_run: 2, errors: 0, plugins: [{ plugin_id: 'smoke', score: 0.9, latency_p50_ms: 10, time_to_first_token_p50_ms: 5, tokens_per_second: 50, cases_run: 2 }] },
+      { model_name: 'm2', host_name: 'gpu-node', run_id: 'r2', overall_score: 0.8, latency_p50_ms: 30, latency_p95_ms: 40, time_to_first_token_p50_ms: 15, tokens_per_second: 20, cases_run: 2, errors: 0, plugins: [{ plugin_id: 'smoke', score: 0.8, latency_p50_ms: 30, time_to_first_token_p50_ms: 15, tokens_per_second: 20, cases_run: 2 }] },
     ],
   },
   '/api/benchmarks/r1': {
@@ -227,7 +227,10 @@ assert('compare: score shown', d4.getElementById('compare').textContent.includes
 assert('compare: tooltip glyph is i', d5.querySelector('th[title]') !== null && !d5.querySelector('th[title]').textContent.includes('?'));
 assert('compare?run=r1: delete run button present', d5.querySelector('button[data-delete-run]') !== null);
 assert('compare: column toggle checkboxes present', d5.querySelectorAll('input[data-col]').length >= 9);
-assert('compare: minimal defaults (4 core checked)', d5.querySelectorAll('input[data-col]:checked').length === 4);
+assert('compare: minimal defaults (5 core checked)', d5.querySelectorAll('input[data-col]:checked').length === 5);
+assert('compare: host column present', d5.querySelector('input[data-col="host"]') !== null);
+assert('compare: host column checked by default', d5.querySelector('input[data-col="host"]').checked);
+assert('compare: host value rendered', d5.getElementById('compare').textContent.includes('lab-server'));
 assert('compare: latency cols hidden by default', !d5.querySelector('input[data-col="p50"]').checked && !d5.querySelector('input[data-col="tps"]').checked);
 assert('compare: show-errors button present', d5.querySelector('button#show-errors') !== null);
 assert('compare: per-plugin columns built', d5.querySelector('input[data-col="plugin:smoke:score"]') !== null);
@@ -235,6 +238,8 @@ assert('compare: per-plugin columns built', d5.querySelector('input[data-col="pl
 assert('compare multi-run: both models', d6.getElementById('compare').textContent.includes('m1') && d6.getElementById('compare').textContent.includes('m2'));
 assert('compare multi-run: run column shown', d6.getElementById('compare').textContent.includes('r1') && d6.getElementById('compare').textContent.includes('r2'));
 assert('compare multi-run: delete runs button present', d6.querySelector('button[data-delete-run]') !== null);
+assert('compare multi-run: host filter shown', d6.querySelector('select#compare-host-filter') !== null);
+assert('compare multi-run: host values in filter', Array.from(d6.querySelectorAll('#compare-host-filter option')).map((o) => o.value).sort().join(',') === '__all__,gpu-node,lab-server');
 
 assert('run: no script error', !d7.title.startsWith('SCRIPT ERROR'));
 assert('run: form visible', d7.getElementById('benchmark-form').style.display === 'block');

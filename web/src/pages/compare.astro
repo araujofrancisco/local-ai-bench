@@ -116,6 +116,8 @@ import MainLayout from '../layouts/MainLayout.astro';
       const cols = {
         model: { label: 'Model', hint: HINTS.Model, group: 'General', type: 'text', align: 'left',
           extract: (r) => r.model_name, defaultVisible: true },
+        host: { label: 'Host', hint: 'Ollama server that ran this benchmark (identical model names across servers stay distinguishable).', group: 'General', type: 'text', align: 'left',
+          extract: (r) => r.host_name, defaultVisible: true },
         run: { label: 'Run', hint: HINTS.Run, group: 'General', type: 'text', align: 'left',
           extract: (r) => r.run_id, defaultVisible: isMultiRun },
         score: { label: 'Score', hint: HINTS.Score, group: 'General', type: 'number', align: 'right',
@@ -231,7 +233,20 @@ import MainLayout from '../layouts/MainLayout.astro';
     const compareTable = (rows, runIds, cols) => {
       const keys = visibleKeys(cols);
       const s = storage.sort();
-      return headerRow(runIds, cols) + `
+      const hosts = [...new Set(rows.map((r) => r.host_name).filter(Boolean))].sort();
+      const filteredRows = currentHostFilter
+        ? rows.filter((r) => r.host_name === currentHostFilter)
+        : rows;
+      const hostSelect = hosts.length > 1
+        ? `<div style="display:flex; align-items:center; gap:.5rem; margin-bottom:.75rem;">
+             <label for="compare-host-filter" style="color:#94a3b8; font-size:.875rem;">Host</label>
+             <select id="compare-host-filter" style="background:#0f172a; color:#e2e8f0; border:1px solid #334155; border-radius:.375rem; padding:.375rem .6rem; font-size:.875rem;">
+               <option value="__all__" ${currentHostFilter ? '' : 'selected'}>All hosts</option>
+               ${hosts.map((h) => `<option value="${esc(h)}" ${currentHostFilter === h ? 'selected' : ''}>${esc(h)}</option>`).join('')}
+             </select>
+           </div>`
+        : '';
+      return headerRow(runIds, cols) + hostSelect + `
       <div style="overflow-x:auto; background:#1e293b; border-radius:.5rem; border:1px solid #334155;">
         <table style="width:100%; border-collapse:collapse;">
           <thead>
@@ -241,7 +256,7 @@ import MainLayout from '../layouts/MainLayout.astro';
             </tr>
           </thead>
           <tbody>
-            ${sortRows(rows, cols, s.key, s.dir).map((row, i) => `
+            ${sortRows(filteredRows, cols, s.key, s.dir).map((row, i) => `
               <tr style="border-bottom:1px solid #334155; background:${i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)'};">
                 ${keys.map((k) => {
                    const c = cols[k];
@@ -284,6 +299,7 @@ import MainLayout from '../layouts/MainLayout.astro';
     let currentCols = {};
     let defaultWeights = {};
     let currentWeights = {};
+    let currentHostFilter = null; // null => all hosts
     const categoryOf = {}; // plugin_id -> category
 
     function weightedScore(row) {
@@ -484,6 +500,14 @@ import MainLayout from '../layouts/MainLayout.astro';
     }
 
     const getRoot = () => document.getElementById('compare');
+
+    getRoot()?.addEventListener('change', (e) => {
+      const sel = e.target.closest('select#compare-host-filter');
+      if (sel) {
+        currentHostFilter = sel.value === '__all__' ? null : sel.value;
+        load();
+      }
+    });
 
     getRoot()?.addEventListener('click', async (e) => {
       // Sort by column header.

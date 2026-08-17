@@ -1,10 +1,11 @@
 """Unit tests for model selection (glob filtering + interactive parsing)."""
 
-from local_ai_bench.domain.models import ModelInfo
+from local_ai_bench.domain.models import HostConfig, ModelInfo
 from local_ai_bench.selection import (
     _resolve_indices,
     filter_models,
     matches_any,
+    pick_hosts,
     split_patterns,
 )
 
@@ -63,3 +64,37 @@ def test_resolve_indices_and_ranges():
 
 def test_resolve_indices_ignores_garbage():
     assert _resolve_indices(MODELS, "abc -2 99") == []
+
+
+# --- pick_hosts (interactive host picker) ---
+
+
+def _host(name: str, base_url: str = "http://example.invalid") -> HostConfig:
+    return HostConfig(name=name, base_url=base_url)
+
+
+HOSTS = [_host("local"), _host("lab-server"), _host("gpu-node")]
+
+
+def test_pick_hosts_indices(monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda _: "0 2")
+    assert [h.name for h in pick_hosts(HOSTS)] == ["local", "gpu-node"]
+
+
+def test_pick_hosts_range(monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda _: "1-2")
+    assert [h.name for h in pick_hosts(HOSTS)] == ["lab-server", "gpu-node"]
+
+
+def test_pick_hosts_all(monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda _: "a")
+    assert pick_hosts(HOSTS) == HOSTS
+
+
+def test_pick_hosts_quit_returns_empty(monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda _: "q")
+    assert pick_hosts(HOSTS) == []
+
+
+def test_pick_hosts_empty_returns_empty(monkeypatch):
+    assert pick_hosts([]) == []

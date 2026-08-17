@@ -59,14 +59,19 @@ Run a benchmark against the configured hosts with the enabled plugins. Models
 are auto-discovered; select them with flags:
 
 ```bash
-local-ai-bench run                                 # all discovered models
+local-ai-bench run                                 # all discovered models, all hosts
 local-ai-bench run --config config.yaml            # use a specific config
 local-ai-bench run --models 'qwen*'                # glob match
 local-ai-bench run --models llama3.2:latest,qwen2.5-coder:14b
 local-ai-bench run --exclude '*:0.8b'              # skip some models
-local-ai-bench run --interactive                   # pick interactively
+local-ai-bench run --interactive                   # pick hosts, then models
 local-ai-bench run --db benchmark.db               # save results to SQLite
 ```
+
+With multiple servers configured, `--interactive` prompts for hosts first
+(numbered list of `name (base_url)`), then for models discovered only on the
+chosen hosts. Quitting either prompt aborts the run without benchmarking
+anything.
 
 ### `run-single`
 
@@ -78,7 +83,19 @@ argument; it must match a discovered model exactly.
 local-ai-bench run-single llama3.2:latest
 local-ai-bench run-single llama3.2:latest --db benchmark.db
 local-ai-bench run-single llama3.2:latest --config config.yaml
+local-ai-bench run-single llama3.2:latest --host lab-server   # target one server
 ```
+
+With several servers configured, the same model name can exist on more than one
+host. `run-single` warns and uses the first match in that case; pass `--host` to
+benchmark the model on a specific server. CLI summary tables show a Host column
+so identical model names across servers stay distinguishable.
+
+`run` benchmarks every configured host. By default hosts run **sequentially**
+(`runner.concurrency: 1`), which keeps latency measurements clean; setting
+`runner.concurrency` above 1 runs independent servers in **parallel** while each
+server's cases stay sequential (so per-host latency is not affected by local GPU
+contention).
 
 ### `report`
 
@@ -183,11 +200,16 @@ excluded from selection).
 
 - **Sort** — click any numeric column header to sort ascending/descending (the
   active column shows `▲/▼`). Sort choice is remembered between visits.
+- **Host column** — each row shows the Ollama server it ran on, so identical
+  model names across servers stay distinguishable in the same table.
+- **Host filter** — when the selected runs span more than one server, a **Host**
+  dropdown above the table narrows the view to one server's results.
 - **Columns** — click the **Columns** panel to toggle individual columns on/off.
-  Columns include general metrics (Model, Score, p50, p95, TTFT, Tokens/s, Cases,
-  Errors) and **a score column per plugin** that ran in the selected runs. Toggle
-  extra per-plugin latency/TTFT/throughput columns (e.g. `smoke p50`,
-  `translation Tokens/s`). Your column choices persist across reloads.
+  Columns include general metrics (Model, Host, Score, p50, p95, TTFT,
+  Tokens/s, Cases, Errors) and **a score column per plugin** that ran in the
+  selected runs. Toggle extra per-plugin latency/TTFT/throughput columns (e.g.
+  `smoke p50`, `translation Tokens/s`). Your column choices persist across
+  reloads.
 - **Per-plugin columns by default** — which plugin score columns appear by default
   is controlled by `plugins.compare_default` in `config/default.yaml`. Leave it
   empty (`[]`) to show a score column for every enabled plugin; list specific ids

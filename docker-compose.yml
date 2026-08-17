@@ -7,6 +7,8 @@ services:
       - "8000:8000"
     environment:
       - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
+      - LAB_SERVER_URL=${LAB_SERVER_URL:-}
+      - GPU_NODE_URL=${GPU_NODE_URL:-}
       - DATABASE_URL=${DATABASE_URL:-/data/benchmark.db}
       - CONFIG_PATH=${CONFIG_PATH:-/config/default.yaml}
       - STATIC_DIR=${STATIC_DIR:-/app/static}

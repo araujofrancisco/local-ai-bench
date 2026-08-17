@@ -18,7 +18,7 @@ from rich.table import Table
 from local_ai_bench import __version__
 from local_ai_bench.config import BenchmarkConfig, config_hash, load_config, write_default_config
 from local_ai_bench.domain.events import Event, Events
-from local_ai_bench.domain.models import ModelInfo
+from local_ai_bench.domain.models import HostConfig, ModelInfo
 from local_ai_bench.ollama.client import OllamaClient
 from local_ai_bench.ollama.discovery import discover_models
 from local_ai_bench.plugins import load_plugins
@@ -26,7 +26,7 @@ from local_ai_bench.plugins.base import BenchmarkPlugin
 from local_ai_bench.plugins.registry import PluginRegistry
 from local_ai_bench.reporting.repository import write_report
 from local_ai_bench.runner.orchestrator import RunOrchestrator
-from local_ai_bench.selection import filter_models, pick_interactive, split_patterns
+from local_ai_bench.selection import filter_models, pick_hosts, pick_interactive, split_patterns
 from local_ai_bench.storage.repository import BenchmarkRepository
 from local_ai_bench.utils.logging import setup_logging
 
@@ -221,12 +221,14 @@ def plugins(config: str | None = typer.Option(None, "--config")) -> None:
     console.print(table)
 
 
-def _discover_all(cfg: BenchmarkConfig) -> list[ModelInfo]:
-    """Best-effort discovery across all hosts for selection/resolution."""
+def _discover_all(cfg: BenchmarkConfig, host_filter: Callable[[HostConfig], bool] | None = None) -> list[ModelInfo]:
+    """Best-effort discovery across the selected hosts for selection/resolution."""
 
     async def _discover() -> list[ModelInfo]:
         out: list[ModelInfo] = []
         for host in cfg.hosts:
+            if host_filter is not None and not host_filter(host):
+                continue
             client = OllamaClient(host.base_url, host.timeout_seconds)
             try:
                 await client.health()
@@ -264,31 +266,58 @@ def run(
 def run_single(
     model: str = typer.Argument(..., help="Exact model name to benchmark."),
     config: str | None = typer.Option(None, "--config"),
+    host: str | None = typer.Option(
+        None,
+        "--host",
+        help="Restrict to a specific configured host (use when the model name exists on several hosts).",
+    ),
     db: str | None = typer.Option(
         None, "--db", help="SQLite DB path to save results to (e.g. benchmark.db)."
     ),
 ) -> None:
     """Run ALL enabled plugins for a single model and save to SQLite (and files)."""
     cfg = _load(config)
+
+    host_filter = None
+    if host is not None:
+        host_names = {h.name for h in cfg.hosts}
+        if host not in host_names:
+            console.print(
+                f"[red]Unknown host: {host}[/red] "
+                f"(configured: {', '.join(sorted(host_names)) or 'none'})"
+            )
+            raise typer.Exit(1)
+        host_filter = lambda h: h.name == host  # noqa: E731
+
     plugin_instances = _load_plugin_instances(cfg)
 
-    discovered = _discover_all(cfg)
-    match = next((m for m in discovered if m.model_name == model), None)
-    if match is None:
+    discovered = _discover_all(cfg, host_filter)
+    matches = [m for m in discovered if m.model_name == model]
+    if not matches:
         console.print(f"[red]Model not found: {model}[/red]")
         console.print("Available models:")
-        for m in sorted(discovered, key=lambda x: x.model_name):
-            console.print(f"  • {m.model_name}")
+        for m in sorted(discovered, key=lambda x: (x.host_name, x.model_name)):
+            console.print(f"  • {m.model_name}  ({m.host_name})")
         raise typer.Exit(1)
 
+    match = matches[0]
+    if len({m.host_name for m in matches}) > 1:
+        hosts_list = ", ".join(sorted({m.host_name for m in matches}))
+        console.print(
+            f"[yellow]⚠ '{model}' exists on multiple hosts ({hosts_list}); "
+            f"using {match.host_name}. Pass --host to target a specific server.[/yellow]"
+        )
+
     console.print(f"[green]Benchmarking single model:[/green] {model}")
+    console.print(f"[dim]Host: {match.host_name}[/dim]")
     console.print(f"[dim]Plugins: {', '.join(p.id for p in plugin_instances)}[/dim]")
     console.print(f"[dim]config hash: {config_hash(cfg)}[/dim]")
 
     _execute_run(
         cfg,
         plugin_instances,
-        model_filter=lambda mi: mi.model_name == model,  # noqa: E731
+        model_filter=lambda mi: mi.model_name == model and mi.host_name == match.host_name,  # noqa: E731
+        host_filter=host_filter,
         db=db,
         detail=True,
     )
@@ -304,7 +333,17 @@ def _run_benchmark(
     cfg = _load(config)
     plugin_instances = _load_plugin_instances(cfg)
 
-    discovered = _discover_all(cfg)
+    host_filter = None
+    if interactive:
+        selected_hosts = pick_hosts(cfg.hosts)
+        if not selected_hosts:
+            console.print("[yellow]No hosts selected. Aborting.[/yellow]")
+            raise typer.Exit(0)
+        host_names = {h.name for h in selected_hosts}
+        host_filter = lambda h: h.name in host_names  # noqa: E731
+        console.print(f"[green]Hosts:[/green] {', '.join(sorted(host_names))}")
+
+    discovered = _discover_all(cfg, host_filter)
     selected_names: set[str] = set()
     model_filter = None
     if discovered:
@@ -313,6 +352,9 @@ def _run_benchmark(
         pool = filter_models(discovered, include, exclude_pats)
         if interactive:
             pool = pick_interactive(pool)
+            if not pool:
+                console.print("[yellow]No models selected. Aborting.[/yellow]")
+                raise typer.Exit(0)
         if models and not pool:
             console.print("[red]No models matched your --models pattern(s).[/red]")
             raise typer.Exit(1)
@@ -324,7 +366,9 @@ def _run_benchmark(
             model_filter = lambda mi: mi.model_name in selected_names  # noqa: E731
 
     console.print(f"[dim]config hash: {config_hash(cfg)}[/dim]")
-    _execute_run(cfg, plugin_instances, model_filter=model_filter, db=db, detail=False)
+    _execute_run(
+        cfg, plugin_instances, model_filter=model_filter, host_filter=host_filter, db=db, detail=False
+    )
 
 
 def _execute_run(
@@ -332,6 +376,7 @@ def _execute_run(
     plugin_instances: list[BenchmarkPlugin],
     *,
     model_filter: Callable[[ModelInfo], bool] | None,
+    host_filter: Callable[[HostConfig], bool] | None,
     db: str | None,
     detail: bool,
 ) -> None:
@@ -354,7 +399,13 @@ def _execute_run(
                 f"[{event.kind}] {event.model or ''} {event.plugin or ''} {event.case_id or ''}".strip()
             )
 
-        orchestrator = RunOrchestrator(cfg, plugin_instances, event_cb=on_event, model_filter=model_filter)
+        orchestrator = RunOrchestrator(
+            cfg,
+            plugin_instances,
+            event_cb=on_event,
+            model_filter=model_filter,
+            host_filter=host_filter,
+        )
         result = asyncio.run(orchestrator.run())
 
     report_dir = write_report(
@@ -374,6 +425,8 @@ def _execute_run(
 
     summary = Table(title="Summary")
     if detail:
+        summary.add_column("Host")
+        summary.add_column("Model")
         summary.add_column("Plugin")
         summary.add_column("Cases")
         summary.add_column("Passed")
@@ -381,12 +434,15 @@ def _execute_run(
         for mr in sorted(result.models, key=lambda x: x.model_name):
             for p in mr.plugins:
                 summary.add_row(
-                    f"{mr.model_name} / {p.plugin_id}",
+                    mr.host_name,
+                    mr.model_name,
+                    p.plugin_id,
                     str(p.total_cases),
                     str(p.successful_cases),
                     _num(p.score, 3),
                 )
     else:
+        summary.add_column("Host")
         summary.add_column("Model")
         summary.add_column("p50 ms")
         summary.add_column("p95 ms")
@@ -394,6 +450,7 @@ def _execute_run(
         summary.add_column("Score")
         for mr in sorted(result.models, key=lambda x: (x.overall_score or 0), reverse=True):
             summary.add_row(
+                mr.host_name,
                 mr.model_name,
                 _num(mr.latency_p50_ms),
                 _num(mr.latency_p95_ms),
@@ -480,6 +537,7 @@ def history(
             table = Table(title=f"History for {model}")
             table.add_column("Timestamp")
             table.add_column("Run ID")
+            table.add_column("Host")
             table.add_column("Score")
             table.add_column("p50 ms")
             table.add_column("p95 ms")
@@ -490,6 +548,7 @@ def history(
                 table.add_row(
                     r["timestamp"][:19],
                     r["run_id"],
+                    r.get("host_name") or "-",
                     _num(r["overall_score"], 3),
                     _num(r["latency_p50_ms"]),
                     _num(r["latency_p95_ms"]),
@@ -534,6 +593,7 @@ def compare(
             console.print("[yellow]No data in database.[/yellow]")
             return
         table = Table(title="Model comparison")
+        table.add_column("Host")
         table.add_column("Model")
         table.add_column("Score")
         table.add_column("p50 ms")
@@ -544,6 +604,7 @@ def compare(
         table.add_column("Errors")
         for r in rows:
             table.add_row(
+                r.get("host_name") or "-",
                 r["model_name"],
                 _num(r["overall_score"], 3),
                 _num(r["latency_p50_ms"]),

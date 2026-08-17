@@ -2,10 +2,36 @@
 
 from __future__ import annotations
 
+import os
+import re
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+_ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+
+
+def expand_env(text: str) -> str:
+    """Expand ``${VAR}`` / ``${VAR:-default}`` references in a config string.
+
+    ``${VAR}`` with an unset variable raises ``ValueError`` (a missing required
+    reference is a config bug, not something to silently blank); ``${VAR:-d}``
+    falls back to ``d``. Unknown references are left as-is so other ``${...}``
+    patterns are never mangled.
+    """
+
+    def _replace(match: re.Match[str]) -> str:
+        name, default = match.group(1), match.group(2)
+        if name in os.environ:
+            return os.environ[name]
+        if default is not None:
+            return default
+        raise ValueError(
+            f"env variable {name} is required by a config value; set it or remove the entry"
+        )
+
+    return _ENV_REF.sub(_replace, text)
 
 
 class Modality(StrEnum):
@@ -36,6 +62,17 @@ class HostConfig(BaseModel):
     name: str
     base_url: str
     timeout_seconds: int = 300
+
+    @field_validator("base_url")
+    @classmethod
+    def _expand_env_refs(cls, value: str) -> str:
+        """Resolve ${VAR} / ${VAR:-default} references in ``base_url``.
+
+        Applied on every construction (config load or direct), so env-provided
+        hosts are expanded exactly once and reproducibly included in the config
+        hash of a run.
+        """
+        return expand_env(value)
 
 
 class ModelInfo(BaseModel):

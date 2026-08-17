@@ -16,12 +16,13 @@ Checks, in order:
    ```bash
    curl -fsS http://host.docker.internal:11434/api/version
    ```
-2. The connection comes from `hosts` in `config/default.yaml` — **not** the
-   `OLLAMA_HOST` env var (that is only a reference). The shipped default
-   contains no `hosts` entries and falls back to `http://127.0.0.1:11434`;
-   declare your real host explicitly (see the commented example in the file).
-   Confirm the `base_url` is reachable from the container's network, not just
-   from your host shell.
+2. The connection comes from `hosts` in `config/default.yaml`. The shipped
+   default lists a `local` host whose `base_url` expands
+   `${OLLAMA_HOST:-http://127.0.0.1:11434}` — so `OLLAMA_HOST` is honored
+   through that entry. Confirm the `base_url` is reachable from the
+   container's network, not just from your host shell. Additional servers are
+   added the same way (`${LAB_SERVER_URL}`, etc.); an unset required variable
+   fails config loading with a clear message.
 3. On Linux Docker Engine, `host.docker.internal` may not resolve. Add to the
    service:
    ```yaml

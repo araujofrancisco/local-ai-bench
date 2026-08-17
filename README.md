@@ -120,16 +120,21 @@ local-ai-bench run --models 'qwen*'
 ## Configuration
 
 Single YAML file (see `config/default.yaml`; `local-ai-bench init` writes a
-copy). The recommended default **omits** `hosts` — the app then uses
-`$OLLAMA_HOST` when set, or the local `http://127.0.0.1:11434`. To benchmark a
-specific machine, list it:
+copy). The default connects to one or more Ollama servers under `hosts`. The
+shipped `local` entry resolves `$OLLAMA_HOST` (set by Docker Compose) or the
+local `http://127.0.0.1:11434`:
 
 ```yaml
 hosts:
+  - name: local
+    base_url: ${OLLAMA_HOST:-http://127.0.0.1:11434}
   - name: lab-server
-    base_url: http://192.168.10.108:11434
+    base_url: ${LAB_SERVER_URL}            # set env, or edit the URL directly
     timeout_seconds: 300
 ```
+
+Base URLs support `${VAR}` / `${VAR:-default}` expansion. Benchmark all hosts,
+or narrow a run with `run --interactive` (picks hosts first, then models).
 
 Other sections:
 
@@ -155,7 +160,7 @@ selected at run time.
 | --- | --- | --- |
 | Dashboard | `/` | Model cards, stats, recent runs (delete here too), live Active Runs panel |
 | Run | `/run` | Start benchmarks; live progress; resumes active runs (`?run=<id>` to track) |
-| Compare | `/compare` | Side-by-side performance (`?run=<id>` for one run, with a delete action); sortable/selectable columns; category-weights editor with live weighted score |
+| Compare | `/compare` | Side-by-side performance (`?run=<id>` for one run, with a delete action); sortable/selectable columns; category-weights editor with live weighted score; Host column + host filter when runs span multiple servers |
 | History | `/history` | Filter by model/host/date/search; running-status chips; single + bulk delete |
 | Plugins | `/plugins` | Details, modalities, and an options editor |
 

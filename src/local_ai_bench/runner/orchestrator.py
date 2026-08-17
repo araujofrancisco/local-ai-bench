@@ -58,6 +58,7 @@ class RunOrchestrator:
         plugins: list[BenchmarkPlugin] | None = None,
         event_cb: EventCallback | None = None,
         model_filter: Callable[[ModelInfo], bool] | None = None,
+        host_filter: Callable[[HostConfig], bool] | None = None,
         run_id: str | None = None,
         plugin_options: dict[str, dict[str, Any]] | None = None,
         client_transport: httpx.AsyncBaseTransport | None = None,
@@ -66,6 +67,7 @@ class RunOrchestrator:
         self.plugins = plugins or []
         self.event_cb = event_cb
         self.model_filter = model_filter
+        self.host_filter = host_filter
         self.run_id = run_id or _new_run_id()
         self.plugin_options = plugin_options
         self._client_transport = client_transport
@@ -102,10 +104,22 @@ class RunOrchestrator:
 
         if cfg.runner.concurrency > 1:
             result.warnings.append(
-                "runner.concurrency > 1 is not implemented; running sequentially"
+                "runner.concurrency > 1 benchmarks hosts in parallel; "
+                "requests stay sequential within each host"
             )
 
-        for host in cfg.hosts:
+        hosts = _select_hosts(cfg.hosts, self.host_filter)
+        if not hosts:
+            msg = "no configured host matched the selection"
+            result.warnings.append(msg)
+            result.errors.append(msg)
+            self.emit(Event(Events.RUN_COMPLETED, data={"errors": len(result.errors)}))
+            return result
+        # Reports/SQLite should reflect the hosts that actually ran, not the
+        # full config, when a host filter narrowed the run.
+        result.hosts = hosts
+
+        async def _run_one(host: HostConfig) -> None:
             try:
                 await self._run_host(host, result)
             except Exception as exc:  # noqa: BLE001 - isolation per host
@@ -113,6 +127,15 @@ class RunOrchestrator:
                 log.warning(msg)
                 result.errors.append(msg)
                 self.emit(Event(Events.HOST_CHECKED, host=host.name, message="failed"))
+
+        # `concurrency > 1` runs independent servers in parallel (each host's
+        # cases stay sequential, so per-host latency is not contaminated by
+        # local GPU contention); the default of 1 stays strictly sequential.
+        if cfg.runner.concurrency > 1:
+            await asyncio.gather(*(_run_one(h) for h in hosts))
+        else:
+            for host in hosts:
+                await _run_one(host)
 
         self.emit(Event(Events.RUN_COMPLETED, data={"errors": len(result.errors)}))
         return result
@@ -484,6 +507,16 @@ def _select_models(
     if model_filter is not None:
         return [m for m in all_models if model_filter(m)]
     return filter_models(all_models, configured or None)
+
+
+def _select_hosts(
+    hosts: list[HostConfig],
+    host_filter: Callable[[HostConfig], bool] | None,
+) -> list[HostConfig]:
+    """Keep the hosts a run should target; no filter means all of them."""
+    if host_filter is None:
+        return list(hosts)
+    return [h for h in hosts if host_filter(h)]
 
 
 def _pct(values: list[float], q: float) -> float | None:

@@ -8,6 +8,7 @@ import httpx
 from local_ai_bench.config import BenchmarkConfig, RunnerConfig
 from local_ai_bench.domain.models import (
     BenchmarkCase,
+    HostConfig,
     ModelInfo,
     ModelResponse,
     TimingMetrics,
@@ -17,6 +18,7 @@ from local_ai_bench.runner.orchestrator import (
     RunOrchestrator,
     _nearest_rank,
     _pct,
+    _select_hosts,
     _select_models,
     _send_with_retries,
 )
@@ -62,6 +64,62 @@ def test_select_models_prefers_filter_over_config():
     all_m = [_model("a"), _model("b")]
     keep_a = lambda m: m.model_name == "a"  # noqa: E731
     assert [m.model_name for m in _select_models(all_m, ["b"], keep_a)] == ["a"]
+
+
+def _host(name: str) -> HostConfig:
+    return HostConfig(name=name, base_url=f"http://{name}.invalid")
+
+
+def test_select_hosts_no_filter_keeps_all():
+    hosts = [_host("a"), _host("b")]
+    assert _select_hosts(hosts, None) == hosts
+
+
+def test_select_hosts_filter_keeps_subset():
+    hosts = [_host("a"), _host("b")]
+    keep_a = lambda h: h.name == "a"  # noqa: E731
+    assert [h.name for h in _select_hosts(hosts, keep_a)] == ["a"]
+
+
+def test_orchestrator_host_filter_narrows_result_hosts():
+    from tests.fixtures.mock_ollama import mock_transport
+
+    hosts = [_host("a"), _host("b")]
+    cfg = BenchmarkConfig(hosts=hosts)
+    orch = RunOrchestrator(
+        cfg,
+        host_filter=lambda h: h.name == "a",  # noqa: E731
+        client_transport=mock_transport(),
+    )
+    result = asyncio.run(orch.run())
+    # Only the selected host ran; the reported host set reflects the filtered
+    # subset, not the full config.
+    assert [h.name for h in result.hosts] == ["a"]
+    assert {m.host_name for m in result.models} == {"a"}
+
+
+def test_orchestrator_no_hosts_matches_reports_error():
+    cfg = BenchmarkConfig(hosts=[])
+    orch = RunOrchestrator(cfg, host_filter=lambda h: False)  # noqa: E731
+    result = asyncio.run(orch.run())
+    assert result.models == []
+    assert any("no configured host" in e for e in result.errors)
+
+
+def test_orchestrator_parallel_hosts_when_concurrency_gt_1():
+    from tests.fixtures.mock_ollama import mock_transport
+
+    hosts = [_host("a"), _host("b")]
+    cfg = BenchmarkConfig(
+        hosts=hosts,
+        runner=RunnerConfig(concurrency=2),
+    )
+    orch = RunOrchestrator(cfg, client_transport=mock_transport())
+    result = asyncio.run(orch.run())
+    # Both hosts ran concurrently; results cover both servers.
+    assert [h.name for h in result.hosts] == ["a", "b"]
+    assert {m.host_name for m in result.models} == {"a", "b"}
+    assert result.errors == []
 
 
 def test_orchestrator_respects_provided_run_id():

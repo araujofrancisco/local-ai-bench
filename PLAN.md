@@ -1672,10 +1672,16 @@ Why:
 - Local GPUs can be easily overloaded.
 - Benchmark stability is more important than throughput.
 - Sequential execution produces cleaner latency measurements.
+- `concurrency > 1` benchmarks independent **hosts** in parallel (each host's
+  cases stay sequential, so per-host latency is not contaminated by local GPU
+  contention).
+
+Done:
+
+- Per-host concurrency (parallel across servers, sequential within a server).
 
 Optional later:
 
-- Per-host concurrency.
 - Per-model concurrency.
 - Benchmark-only parallelism where safe.
 

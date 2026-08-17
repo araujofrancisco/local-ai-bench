@@ -39,6 +39,7 @@ class PluginConfig(BaseModel):
 class RunnerConfig(BaseModel):
     repetitions: int = 3
     warmup_runs: int = 1
+    # >1 runs independent hosts in parallel; each host's cases stay sequential.
     concurrency: int = 1
     temperature: float = 0.0
     seed: int = 42
@@ -135,27 +136,37 @@ class BenchmarkConfig(BaseModel):
 # verbatim (single source of truth), otherwise this text is the fallback.
 DEFAULT_CONFIG_TEXT = """\
 # LocalAIBench configuration.
-# The only required setting is how to connect to Ollama. If you omit `hosts`
-# entirely (the recommended starting point), the default local Ollama
-# (http://127.0.0.1:11434) is used — or $OLLAMA_HOST if that environment
-# variable is set. Docker Compose sets OLLAMA_HOST to the host machine's
-# Ollama automatically.
+# Connect one or more Ollama servers under `hosts`. Each entry is a named
+# Ollama base URL. The `local` entry below resolves to $OLLAMA_HOST (Docker
+# Compose sets it to your host machine's Ollama automatically) or falls back to
+# the default local Ollama (http://127.0.0.1:11434).
 #
-# Benchmark other hosts too by listing them here, e.g.:
-#   hosts:
-#     - name: lab-server
-#       base_url: http://192.168.10.108:11434
-#       timeout_seconds: 300
+# To benchmark a second server, set the env var it references (e.g.
+# LAB_SERVER_URL=http://192.168.10.108:11434) or edit `base_url` directly.
+# A host whose required env var is unset makes the config fail with a clear
+# message; comment the entry out to disable a server.
+#
+# Host values support ${VAR} and ${VAR:-default} expansion.
 #
 # Models are NOT listed here — they are auto-detected from each host by
 # `GET /api/tags`. Choose which ones to benchmark at run time, e.g.:
 #   local-ai-bench run --models 'qwen*'
 #   local-ai-bench run --models llama3.2:latest,qwen2.5-coder:14b
 #   local-ai-bench run --exclude '*:0.8b'
-#   local-ai-bench run --interactive
+#   local-ai-bench run --interactive          # pick hosts, then models
 #
-# With no --models/--exclude/--interactive flags, every autodetected model is
-# benchmarked. There is no "models" section in this file.
+# With no --models/--exclude/--interactive flags, every autodetected model on
+# every configured host is benchmarked. There is no "models" section in this file.
+
+hosts:
+  - name: local
+    base_url: ${OLLAMA_HOST:-http://127.0.0.1:11434}
+  - name: lab-server
+    base_url: ${LAB_SERVER_URL}
+    timeout_seconds: 300
+  # - name: gpu-node
+  #   base_url: ${GPU_NODE_URL}
+  #   timeout_seconds: 600
 
 app:
   name: LocalAIBench
