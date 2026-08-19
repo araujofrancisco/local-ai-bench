@@ -715,6 +715,7 @@ async def export_run(run_id: str, format: str) -> dict[str, Any]:
 
             fieldnames = [
                 "model_name",
+                "host_name",
                 "overall_score",
                 "latency_p50_ms",
                 "latency_p95_ms",
@@ -740,12 +741,14 @@ def _render_markdown(run: dict[str, Any], models: list[dict[str, Any]]) -> str:
     lines.append(f"- Timestamp: {run.get('timestamp')}")
     lines.append(f"- App version: {run.get('app_version')}")
     lines.append(f"- Config hash: `{run.get('config_hash')}`")
+    hosts = run.get("hosts") or []
+    lines.append(f"- Hosts: {', '.join(h.get('name') or h.get('base_url') for h in hosts) if hosts else 'none'}")
     lines.append("")
-    lines.append("| Model | Score | p50 (ms) | p95 (ms) | Tokens/s | Cases | Errors |")
-    lines.append("|---|---|---|---|---|---|---|")
+    lines.append("| Model | Host | Score | p50 (ms) | p95 (ms) | Tokens/s | Cases | Errors |")
+    lines.append("|---|---|---|---|---|---|---|---|")
     for m in models:
         lines.append(
-            f"| {m['model_name']} | {_fmt(m.get('overall_score'), 3)} | "
+            f"| {m['model_name']} | {m.get('host_name') or '-'} | {_fmt(m.get('overall_score'), 3)} | "
             f"{_fmt(m.get('latency_p50_ms'))} | {_fmt(m.get('latency_p95_ms'))} | "
             f"{_fmt(m.get('tokens_per_second'))} | {m.get('cases_run', 0)} | "
             f"{m.get('errors', 0)} |"

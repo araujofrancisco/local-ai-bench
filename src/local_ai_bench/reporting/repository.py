@@ -103,16 +103,16 @@ def _render_markdown(result: RunResult) -> str:
 def _render_model_summary(result: RunResult) -> list[str]:
     lines = ["## Model summary", ""]
     header = (
-        "| Model | Context | Latency p50 (ms) | Latency p95 (ms) | TTFT p50 (ms) | "
+        "| Model | Host | Context | Latency p50 (ms) | Latency p95 (ms) | TTFT p50 (ms) | "
         "Tokens/s | Cases | Errors | Score |"
     )
     lines.append(header)
-    lines.append("|---|---|---|---|---|---|---|---|---|---|")
+    lines.append("|---|---|---|---|---|---|---|---|---|---|---|")
     for m in sorted(result.models, key=lambda x: (x.overall_score or 0), reverse=True):
         ctx = m.plugins[0].metrics.get("max_context_tokens") if m.plugins else None
         ctx_str = f"{ctx}" if ctx else "-"
         lines.append(
-            f"| {m.model_name} | {ctx_str} | {_fmt(m.latency_p50_ms)} | "
+            f"| {m.model_name} | {m.host_name or '-'} | {ctx_str} | {_fmt(m.latency_p50_ms)} | "
             f"{_fmt(m.latency_p95_ms)} | {_fmt(m.time_to_first_token_p50_ms)} | "
             f"{_fmt(m.tokens_per_second)} | {m.cases_run} | {m.errors} | "
             f"{_fmt(m.overall_score, 3) if m.overall_score is not None else '-'} |"
@@ -166,16 +166,16 @@ def _ctx_cell(per: dict[Any, Any], size: int) -> str:
 
 
 def _render_context_recommendation(result: RunResult) -> list[str]:
-    recs = [(m.model_name, m.context_recommendation) for m in result.models if m.context_recommendation]
+    recs = [(m, m.context_recommendation) for m in result.models if m.context_recommendation]
     if not recs:
         return []
     lines = ["## Context-window recommendations", ""]
-    lines.append("| Model | Recommended ctx | Reason |")
-    lines.append("|---|---|---|")
-    for name, rec in recs:
+    lines.append("| Model | Host | Recommended ctx | Reason |")
+    lines.append("|---|---|---|---|")
+    for m, rec in recs:
         ctx = rec.get("recommended_context")
         ctx_str = f"{ctx}" if ctx else "—"
-        lines.append(f"| {name} | {ctx_str} | {rec.get('reason') or ''} |")
+        lines.append(f"| {m.model_name} | {m.host_name or '-'} | {ctx_str} | {rec.get('reason') or ''} |")
     lines.append("")
     return lines
 
@@ -194,18 +194,18 @@ def _render_usecase_comparison(result: RunResult) -> list[str]:
         for m in result.models:
             for p in m.plugins:
                 if p.plugin_id == pid:
-                    rows.append((m.model_name, p))
+                    rows.append((m, p))
         rows.sort(key=lambda r: (r[1].score or -1), reverse=True)
         label = _PID_LABELS.get(pid, pid)
         lines.append(f"### `{pid}` ({label})")
         lines.append("")
-        lines.append("| Model | Passed | Score |")
-        lines.append("|---|---|---|")
+        lines.append("| Model | Host | Passed | Score |")
+        lines.append("|---|---|---|---|")
         if not rows:
-            lines.append("| _none_ | - | - |")
-        for name, p in rows:
+            lines.append("| _none_ | - | - | - |")
+        for m, p in rows:
             lines.append(
-                f"| {name} | {p.successful_cases}/{p.total_cases} | "
+                f"| {m.model_name} | {m.host_name or '-'} | {p.successful_cases}/{p.total_cases} | "
                 f"{_fmt(p.score, 3)} |"
             )
         lines.append("")
@@ -214,9 +214,9 @@ def _render_usecase_comparison(result: RunResult) -> list[str]:
 
 def _render_per_case_detail(result: RunResult) -> list[str]:
     lines: list[str] = ["## Per-case detail", ""]
-    lines.append("| Plugin | Model | Case | Result | Score |")
-    lines.append("|---|---|---|---|---|")
-    for m in sorted(result.models, key=lambda x: x.model_name):
+    lines.append("| Plugin | Model | Host | Case | Result | Score |")
+    lines.append("|---|---|---|---|---|---|")
+    for m in sorted(result.models, key=lambda x: (x.host_name or "", x.model_name)):
         for p in m.plugins:
             label = _PID_LABELS.get(p.plugin_id, p.plugin_id)
             per_ctx = p.metrics.get("per_context_score", {}) if p.metrics else {}
@@ -224,13 +224,13 @@ def _render_per_case_detail(result: RunResult) -> list[str]:
                 for ctx_size, sc in _sorted_context_items(per_ctx):
                     ok = sc is not None and float(sc) > 0
                     lines.append(
-                        f"| {label} | {m.model_name} | ctx={ctx_size} | "
+                        f"| {label} | {m.model_name} | {m.host_name or '-'} | ctx={ctx_size} | "
                         f"{'✅' if ok else '❌'} | {_fmt(sc, 2)} |"
                     )
             else:
                 passed = p.successful_cases == p.total_cases
                 lines.append(
-                    f"| {label} | {m.model_name} | (aggregate) | "
+                    f"| {label} | {m.model_name} | {m.host_name or '-'} | (aggregate) | "
                     f"{'✅' if passed else '❌'} | {_fmt(p.score, 2)} |"
                 )
     lines.append("")
@@ -240,7 +240,7 @@ def _render_per_case_detail(result: RunResult) -> list[str]:
 def _render_context_window(result: RunResult) -> list[str]:
     lines: list[str] = []
     lc = [
-        (m.model_name, p)
+        (m, p)
         for m in result.models
         for p in m.plugins
         if p.plugin_id == "long_context"
@@ -252,14 +252,14 @@ def _render_context_window(result: RunResult) -> list[str]:
     lines.append("")
     lines.append("Accuracy (1.0 = correct, 0 = wrong) by context size:")
     lines.append("")
-    header = "| Model | Max ctx (tokens) | " + " | ".join(f"Ctx {size}" for size in sizes) + " |"
+    header = "| Model | Host | Max ctx (tokens) | " + " | ".join(f"Ctx {size}" for size in sizes) + " |"
     lines.append(header)
-    lines.append("|" + "---|" * (2 + len(sizes)))
-    for name, p in lc:
+    lines.append("|" + "---|" * (3 + len(sizes)))
+    for m, p in lc:
         per = p.metrics.get("per_context_score", {})
         max_ctx = p.metrics.get("max_context_tokens", "-")
         cells = " | ".join(_ctx_cell(per, size) for size in sizes)
-        lines.append(f"| {name} | {max_ctx} | {cells} |")
+        lines.append(f"| {m.model_name} | {m.host_name or '-'} | {max_ctx} | {cells} |")
     lines.append("")
     return lines
 
@@ -267,7 +267,8 @@ def _render_context_window(result: RunResult) -> list[str]:
 def _render_plugin_detail(result: RunResult) -> list[str]:
     lines = ["## Plugin detail", ""]
     for m in result.models:
-        lines.append(f"### {m.model_name}")
+        host = f" · {m.host_name}" if m.host_name else ""
+        lines.append(f"### {m.model_name}{host}")
         lines.append("")
         for p in m.plugins:
             lines.append(
@@ -351,13 +352,14 @@ def _html_errors(result: RunResult) -> str:
 def _html_model_summary(result: RunResult) -> str:
     if not result.models:
         return "<h2>Models</h2>\n<p class=\"muted\">No models benchmarked.</p>"
-    rows = ["<tr><th>Model</th><th>Context</th><th>Latency p50 (ms)</th>"
+    rows = ["<tr><th>Model</th><th>Host</th><th>Context</th><th>Latency p50 (ms)</th>"
             "<th>Latency p95 (ms)</th><th>TTFT p50 (ms)</th>"
             "<th>Tokens/s</th><th>Cases</th><th>Errors</th><th>Score</th></tr>"]
     for m in sorted(result.models, key=lambda x: (x.overall_score or 0), reverse=True):
         ctx = m.plugins[0].metrics.get("max_context_tokens") if m.plugins else None
         rows.append(
-            f"<tr><td>{_esc(m.model_name)}</td><td>{_esc(ctx) if ctx else '-'}</td>"
+            f"<tr><td>{_esc(m.model_name)}</td><td>{_esc(m.host_name) if m.host_name else '-'}</td>"
+            f"<td>{_esc(ctx) if ctx else '-'}</td>"
             f"<td>{_fmt(m.latency_p50_ms)}</td><td>{_fmt(m.latency_p95_ms)}</td>"
             f"<td>{_fmt(m.time_to_first_token_p50_ms)}</td>"
             f"<td>{_fmt(m.tokens_per_second)}</td>"
@@ -375,15 +377,16 @@ def _html_usecase_comparison(result: RunResult) -> str:
         for m in result.models:
             for p in m.plugins:
                 if p.plugin_id == pid:
-                    rows.append((m.model_name, p))
+                    rows.append((m, p))
         rows.sort(key=lambda r: (r[1].score or -1), reverse=True)
         label = _PID_LABELS.get(pid, pid)
-        cells = ["<tr><th>Model</th><th>Passed</th><th>Score</th></tr>"]
+        cells = ["<tr><th>Model</th><th>Host</th><th>Passed</th><th>Score</th></tr>"]
         if not rows:
-            cells.append("<tr><td colspan=\"3\" class=\"muted\">none</td></tr>")
-        for name, p in rows:
+            cells.append("<tr><td colspan=\"4\" class=\"muted\">none</td></tr>")
+        for m, p in rows:
             cells.append(
-                f"<tr><td>{_esc(name)}</td><td>{p.successful_cases}/{p.total_cases}</td>"
+                f"<tr><td>{_esc(m.model_name)}</td><td>{_esc(m.host_name) if m.host_name else '-'}</td>"
+                f"<td>{p.successful_cases}/{p.total_cases}</td>"
                 f"<td>{_fmt(p.score, 3)}</td></tr>"
             )
         sections.append(
@@ -394,22 +397,23 @@ def _html_usecase_comparison(result: RunResult) -> str:
 
 
 def _html_context_recommendation(result: RunResult) -> str:
-    recs = [(m.model_name, m.context_recommendation) for m in result.models if m.context_recommendation]
+    recs = [(m, m.context_recommendation) for m in result.models if m.context_recommendation]
     if not recs:
         return ""
-    rows = ["<tr><th>Model</th><th>Recommended ctx</th><th>Reason</th></tr>"]
-    for name, rec in recs:
+    rows = ["<tr><th>Model</th><th>Host</th><th>Recommended ctx</th><th>Reason</th></tr>"]
+    for m, rec in recs:
         ctx = rec.get("recommended_context")
         rows.append(
-            f"<tr><td>{_esc(name)}</td><td>{_esc(ctx) if ctx else '—'}</td>"
+            f"<tr><td>{_esc(m.model_name)}</td><td>{_esc(m.host_name) if m.host_name else '-'}</td>"
+            f"<td>{_esc(ctx) if ctx else '—'}</td>"
             f"<td>{_esc(rec.get('reason') or '')}</td></tr>"
         )
     return "<h2>Context-window recommendations</h2>\n<table>\n" + "\n".join(rows) + "\n</table>"
 
 
 def _html_per_case_detail(result: RunResult) -> str:
-    rows = ["<tr><th>Plugin</th><th>Model</th><th>Case</th><th>Result</th><th>Score</th></tr>"]
-    for m in sorted(result.models, key=lambda x: x.model_name):
+    rows = ["<tr><th>Plugin</th><th>Model</th><th>Host</th><th>Case</th><th>Result</th><th>Score</th></tr>"]
+    for m in sorted(result.models, key=lambda x: (x.host_name or "", x.model_name)):
         for p in m.plugins:
             label = _PID_LABELS.get(p.plugin_id, p.plugin_id)
             per_ctx = p.metrics.get("per_context_score", {}) if p.metrics else {}
@@ -419,6 +423,7 @@ def _html_per_case_detail(result: RunResult) -> str:
                     mark = '<span class="ok">✓</span>' if ok else '<span class="bad">✗</span>'
                     rows.append(
                         f"<tr><td>{_esc(label)}</td><td>{_esc(m.model_name)}</td>"
+                        f"<td>{_esc(m.host_name) if m.host_name else '-'}</td>"
                         f"<td>ctx={_esc(ctx_size)}</td><td>{mark}</td>"
                         f"<td>{_fmt(sc, 2)}</td></tr>"
                     )
@@ -427,6 +432,7 @@ def _html_per_case_detail(result: RunResult) -> str:
                 mark = '<span class="ok">✓</span>' if passed else '<span class="bad">✗</span>'
                 rows.append(
                     f"<tr><td>{_esc(label)}</td><td>{_esc(m.model_name)}</td>"
+                    f"<td>{_esc(m.host_name) if m.host_name else '-'}</td>"
                     f"<td>(aggregate)</td><td>{mark}</td><td>{_fmt(p.score, 2)}</td></tr>"
                 )
     return "<h2>Per-case detail</h2>\n<table>\n" + "\n".join(rows) + "\n</table>"
@@ -434,20 +440,21 @@ def _html_per_case_detail(result: RunResult) -> str:
 
 def _html_context_window(result: RunResult) -> str:
     lc = [
-        (m.model_name, p)
+        (m, p)
         for m in result.models
         for p in m.plugins
         if p.plugin_id == "long_context"
     ]
     if not lc:
         return ""
-    rows = ["<tr><th>Model</th><th>Max ctx (tokens)</th><th>Ctx 256</th><th>Ctx 1024</th>"
+    rows = ["<tr><th>Model</th><th>Host</th><th>Max ctx (tokens)</th><th>Ctx 256</th><th>Ctx 1024</th>"
             "<th>Ctx 4096</th><th>Ctx 16k</th></tr>"]
-    for name, p in lc:
+    for m, p in lc:
         per = p.metrics.get("per_context_score", {})
         max_ctx = p.metrics.get("max_context_tokens", "-")
         rows.append(
-            f"<tr><td>{_esc(name)}</td><td>{_esc(max_ctx)}</td>"
+            f"<tr><td>{_esc(m.model_name)}</td><td>{_esc(m.host_name) if m.host_name else '-'}</td>"
+            f"<td>{_esc(max_ctx)}</td>"
             f"<td>{_ctx_cell(per, 256)}</td><td>{_ctx_cell(per, 1024)}</td>"
             f"<td>{_ctx_cell(per, 4096)}</td><td>{_ctx_cell(per, 16384)}</td></tr>"
         )
@@ -470,6 +477,8 @@ def _html_plugin_detail(result: RunResult) -> str:
                 f"{p.successful_cases} passed, score {_fmt(p.score, 3)}{extra}</li>"
             )
         sections.append(
-            f"<h3>{_esc(m.model_name)}</h3>\n<ul>\n" + "\n".join(items) + "\n</ul>"
+            f"<h3>{_esc(m.model_name)}{_esc(' · ' + m.host_name) if m.host_name else ''}</h3>\n<ul>\n"
+            + "\n".join(items)
+            + "\n</ul>"
         )
     return "<h2>Plugin detail</h2>\n" + "\n".join(sections)

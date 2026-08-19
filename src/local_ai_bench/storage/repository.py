@@ -41,12 +41,13 @@ CREATE TABLE IF NOT EXISTS models (
     tokens_per_second REAL,
     overall_score REAL,
     context_recommendation TEXT,
-    UNIQUE(run_id, model_name)
+    UNIQUE(run_id, host_name, model_name)
 );
 
 CREATE TABLE IF NOT EXISTS plugins (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id TEXT NOT NULL,
+    host_name TEXT,
     model_name TEXT NOT NULL,
     plugin_id TEXT NOT NULL,
     total_cases INTEGER DEFAULT 0,
@@ -55,12 +56,17 @@ CREATE TABLE IF NOT EXISTS plugins (
     skipped_cases INTEGER DEFAULT 0,
     score REAL,
     metrics TEXT,
-    UNIQUE(run_id, model_name, plugin_id)
+    latency_p50_ms REAL,
+    time_to_first_token_p50_ms REAL,
+    tokens_per_second REAL,
+    cases_run INTEGER,
+    UNIQUE(run_id, host_name, model_name, plugin_id)
 );
 
 CREATE TABLE IF NOT EXISTS cases (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id TEXT NOT NULL,
+    host_name TEXT,
     model_name TEXT NOT NULL,
     plugin_id TEXT NOT NULL,
     case_id TEXT NOT NULL,
@@ -75,7 +81,7 @@ CREATE TABLE IF NOT EXISTS cases (
     completion_tokens INTEGER,
     attempt INTEGER DEFAULT 1,
     raw_response TEXT,
-    UNIQUE(run_id, model_name, plugin_id, case_id, attempt)
+    UNIQUE(run_id, host_name, model_name, plugin_id, case_id, attempt)
 );
 
 CREATE INDEX IF NOT EXISTS idx_models_run ON models(run_id);
@@ -113,6 +119,19 @@ def _normalize_run(row: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
+def _uses_host_identity(conn: sqlite3.Connection) -> bool:
+    """True when the models table is keyed by (run_id, host_name, model_name)."""
+    for idx in conn.execute("PRAGMA index_list('models')").fetchall():
+        try:
+            info = conn.execute(f"PRAGMA index_info('{idx['name']}')").fetchall()
+        except sqlite3.Error:
+            continue
+        cols = {row["name"] for row in info}
+        if {"run_id", "host_name", "model_name"} <= cols:
+            return True
+    return False
+
+
 class BenchmarkRepository:
     """Persist RunResult into SQLite for later comparison and analysis."""
 
@@ -139,6 +158,93 @@ class BenchmarkRepository:
         ):
             if col not in pcols:
                 self._conn.execute(f"ALTER TABLE plugins ADD COLUMN {col} {sql}")
+
+        # v2: results are keyed by (host, model) so identical model names on
+        # different servers no longer overwrite each other in the same run.
+        if not _uses_host_identity(self._conn):
+            self._migrate_host_identity()
+
+    def _migrate_host_identity(self) -> None:
+        """Rebuild models/plugins/cases so a model's identity includes the host.
+
+        Older DBs keyed every result by ``(run_id, model_name)`` only, so when
+        the same model existed on two servers only the last-saved host survived
+        (INSERT OR REPLACE). Rebuilding the three result tables with a
+        ``host_name`` in every UNIQUE key preserves existing history while
+        making each (server, model) pair a distinct row going forward.
+
+        ``plugins``/``cases`` did not store a host column; their host is
+        backfilled from ``models`` by matching ``(run_id, model_name)``, which
+        was unique in the old schema.
+        """
+        cur = self._conn.cursor()
+        old_models = [dict(r) for r in cur.execute("SELECT * FROM models").fetchall()]
+        old_plugins = [dict(r) for r in cur.execute("SELECT * FROM plugins").fetchall()]
+        old_cases = [dict(r) for r in cur.execute("SELECT * FROM cases").fetchall()]
+
+        host_map: dict[tuple[str, str], str] = {}
+        for r in old_models:
+            host_map[(r["run_id"], r["model_name"])] = r.get("host_name") or ""
+
+        cur.execute("DROP TABLE cases")
+        cur.execute("DROP TABLE plugins")
+        cur.execute("DROP TABLE models")
+        # Recreate the result tables with the new (host-aware) schema. The other
+        # tables (runs / plugin_options / settings) are untouched by DROP here
+        # and simply re-declared by IF NOT EXISTS.
+        cur.executescript(_SCHEMA)
+
+        for r in old_models:
+            cur.execute(
+                """INSERT INTO models
+                (id, run_id, host_name, model_name, model_digest, max_context_tokens,
+                 completion_tokens_total, cases_run, errors,
+                 latency_p50_ms, latency_p95_ms, time_to_first_token_p50_ms,
+                 tokens_per_second, overall_score, context_recommendation)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    r["id"], r["run_id"], r.get("host_name"), r["model_name"],
+                    r.get("model_digest"), r.get("max_context_tokens"),
+                    r.get("completion_tokens_total", 0), r.get("cases_run", 0),
+                    r.get("errors", 0), r.get("latency_p50_ms"), r.get("latency_p95_ms"),
+                    r.get("time_to_first_token_p50_ms"), r.get("tokens_per_second"),
+                    r.get("overall_score"), r.get("context_recommendation"),
+                ),
+            )
+        for r in old_plugins:
+            cur.execute(
+                """INSERT INTO plugins
+                (id, run_id, host_name, model_name, plugin_id, total_cases,
+                 successful_cases, failed_cases, skipped_cases, score, metrics,
+                 latency_p50_ms, time_to_first_token_p50_ms, tokens_per_second, cases_run)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    r["id"], r["run_id"], host_map.get((r["run_id"], r["model_name"]), ""),
+                    r["model_name"], r["plugin_id"], r.get("total_cases", 0),
+                    r.get("successful_cases", 0), r.get("failed_cases", 0),
+                    r.get("skipped_cases", 0), r.get("score"), r.get("metrics"),
+                    r.get("latency_p50_ms"), r.get("time_to_first_token_p50_ms"),
+                    r.get("tokens_per_second"), r.get("cases_run", 0),
+                ),
+            )
+        for r in old_cases:
+            cur.execute(
+                """INSERT INTO cases
+                (id, run_id, host_name, model_name, plugin_id, case_id,
+                 passed, score, response_text, error, total_ms,
+                 time_to_first_token_ms, tokens_per_second, prompt_tokens,
+                 completion_tokens, attempt, raw_response)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    r["id"], r["run_id"], host_map.get((r["run_id"], r["model_name"]), ""),
+                    r["model_name"], r["plugin_id"], r["case_id"], r.get("passed"),
+                    r.get("score"), r.get("response_text"), r.get("error"), r.get("total_ms"),
+                    r.get("time_to_first_token_ms"), r.get("tokens_per_second"),
+                    r.get("prompt_tokens"), r.get("completion_tokens"),
+                    r.get("attempt", 1), r.get("raw_response"),
+                ),
+            )
+        self._conn.commit()
 
     def close(self) -> None:
         self._conn.close()
@@ -187,12 +293,13 @@ class BenchmarkRepository:
             for p in m.plugins:
                 cur.execute(
                     """INSERT OR REPLACE INTO plugins
-                    (run_id, model_name, plugin_id, total_cases, successful_cases,
+                    (run_id, host_name, model_name, plugin_id, total_cases, successful_cases,
                      failed_cases, skipped_cases, score, metrics,
                      latency_p50_ms, time_to_first_token_p50_ms, tokens_per_second, cases_run)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         result.run_id,
+                        m.host_name,
                         m.model_name,
                         p.plugin_id,
                         p.total_cases,
@@ -210,13 +317,14 @@ class BenchmarkRepository:
             for c in m.cases:
                 cur.execute(
                     """INSERT OR REPLACE INTO cases
-                    (run_id, model_name, plugin_id, case_id, passed, score,
+                    (run_id, host_name, model_name, plugin_id, case_id, passed, score,
                      response_text, error, total_ms, time_to_first_token_ms,
                      tokens_per_second, prompt_tokens, completion_tokens,
                      attempt, raw_response)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         result.run_id,
+                        m.host_name,
                         m.model_name,
                         c.case.plugin_id,
                         c.case.id,
@@ -396,7 +504,9 @@ class BenchmarkRepository:
         # Attach per-plugin aggregates (with latency) for each model/run. Each
         # row carries its run_id, so this works for scoped and unscoped views.
         for row in rows:
-            row["plugins"] = self._plugin_aggregates(row["run_id"], row["model_name"])
+            row["plugins"] = self._plugin_aggregates(
+                row["run_id"], row["host_name"], row["model_name"]
+            )
         return rows
 
     def _select_models(
@@ -444,16 +554,16 @@ class BenchmarkRepository:
         cur = self._conn.execute(q, params)
         return [dict(row) for row in cur.fetchall()]
 
-    def _plugin_aggregates(self, run_id: str, model_name: str) -> list[dict[str, Any]]:
+    def _plugin_aggregates(self, run_id: str, host_name: str, model_name: str) -> list[dict[str, Any]]:
         cur = self._conn.execute(
             """
             SELECT plugin_id, score, metrics, latency_p50_ms, time_to_first_token_p50_ms,
                    tokens_per_second, cases_run
             FROM plugins
-            WHERE run_id = ? AND model_name = ?
+            WHERE run_id = ? AND host_name = ? AND model_name = ?
             ORDER BY plugin_id
             """,
-            (run_id, model_name),
+            (run_id, host_name, model_name),
         )
         return [dict(row) for row in cur.fetchall()]
 
@@ -461,12 +571,12 @@ class BenchmarkRepository:
         """Per-case rows for a run, including error text (transport + evaluate)."""
         cur = self._conn.execute(
             """
-            SELECT c.model_name, c.plugin_id, c.case_id, c.passed, c.score,
+            SELECT c.host_name, c.model_name, c.plugin_id, c.case_id, c.passed, c.score,
                    c.error, c.total_ms, c.time_to_first_token_ms,
                    c.tokens_per_second, c.prompt_tokens, c.completion_tokens, c.attempt
             FROM cases c
             WHERE c.run_id = ?
-            ORDER BY c.model_name, c.plugin_id, c.case_id
+            ORDER BY c.host_name, c.model_name, c.plugin_id, c.case_id
             """,
             (run_id,),
         )

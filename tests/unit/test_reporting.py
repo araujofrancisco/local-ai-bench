@@ -128,3 +128,44 @@ def test_html_empty_run_still_renders(tmp_path):
     html = (tmp_path / "empty" / "report.html").read_text(encoding="utf-8")
 
     assert "No models benchmarked" in html
+
+
+def test_report_distinguishes_identical_model_across_hosts(tmp_path):
+    """With the same model on two servers, each host's row is reported distinctly."""
+    host_a = HostConfig(name="hA", base_url="http://a.invalid")
+    host_b = HostConfig(name="hB", base_url="http://b.invalid")
+    plug_a = PluginAggregate(
+        plugin_id="smoke", model_name="qwen3.5:0.8b", host_name="hA",
+        total_cases=1, successful_cases=1, score=0.9,
+    )
+    plug_b = PluginAggregate(
+        plugin_id="smoke", model_name="qwen3.5:0.8b", host_name="hB",
+        total_cases=1, successful_cases=0, score=0.2,
+    )
+    model_a = ModelBenchmarkResult(
+        host_name="hA", model_name="qwen3.5:0.8b", plugins=[plug_a],
+        cases_run=1, overall_score=0.9,
+    )
+    model_b = ModelBenchmarkResult(
+        host_name="hB", model_name="qwen3.5:0.8b", plugins=[plug_b],
+        cases_run=1, overall_score=0.2,
+    )
+    result = RunResult(
+        run_id="twohost",
+        timestamp="2026-01-01T00:00:00Z",
+        app_version="0.1.0",
+        config_hash="x",
+        hosts=[host_a, host_b],
+        models=[model_a, model_b],
+    )
+    write_report(str(tmp_path), result)
+
+    md = (tmp_path / "twohost" / "report.md").read_text(encoding="utf-8")
+    html = (tmp_path / "twohost" / "report.html").read_text(encoding="utf-8")
+
+    # Model summary shows a Host column with each server's row.
+    assert "| qwen3.5:0.8b | hA |" in md
+    assert "| qwen3.5:0.8b | hB |" in md
+    # HTML renders both server rows.
+    assert ">qwen3.5:0.8b</td><td>hA</td>" in html
+    assert ">qwen3.5:0.8b</td><td>hB</td>" in html

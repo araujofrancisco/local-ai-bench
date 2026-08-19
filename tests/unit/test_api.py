@@ -33,7 +33,7 @@ from local_ai_bench.domain.models import (  # noqa: E402
     TimingMetrics,
     TokenMetrics,
 )
-from local_ai_bench.storage.repository import BenchmarkRepository  # noqa: E402
+from local_ai_bench.storage.repository import BenchmarkRepository, _uses_host_identity  # noqa: E402
 
 
 def _sample_run() -> RunResult:
@@ -136,6 +136,69 @@ def test_get_model_history_includes_host() -> None:
         rows = repo.get_model_history("m1")
         assert rows and rows[0]["host_name"] == "h1"
         assert rows[0]["run_id"] == "run123"
+    finally:
+        repo.close()
+
+
+def _two_host_run(run_id: str) -> RunResult:
+    """One run where the identical model name ran on two different servers."""
+    host_a = HostConfig(name="hA", base_url="http://a.invalid")
+    host_b = HostConfig(name="hB", base_url="http://b.invalid")
+    models = []
+    for host, score in ((host_a, 0.9), (host_b, 0.2)):
+        info = ModelInfo(host_name=host.name, model_name="qwen3.5:0.8b", digest="d")
+        case = BenchmarkCase(id="c1", plugin_id="smoke", dataset_version="v1", input={"prompt": "hi"})
+        resp = ModelResponse(
+            raw={},
+            text="ok",
+            timing=TimingMetrics(total_ms=10.0, time_to_first_token_ms=2.0),
+            tokens=TokenMetrics(tokens_per_second=50.0, completion_tokens=5),
+        )
+        ev = Evaluation(score=score, passed=score > 0.5)
+        case_result = CaseResult(case=case, model=info, response=resp, evaluation=ev, attempt=1)
+        agg = PluginAggregate(
+            plugin_id="smoke", model_name="qwen3.5:0.8b", host_name=host.name,
+            total_cases=1, successful_cases=1 if score > 0.5 else 0, score=score,
+        )
+        models.append(
+            ModelBenchmarkResult(
+                host_name=host.name, model_name="qwen3.5:0.8b",
+                plugins=[agg], cases=[case_result], cases_run=1, overall_score=score,
+            )
+        )
+    return RunResult(
+        run_id=run_id,
+        timestamp="2026-01-01T00:00:00Z",
+        app_version="0.1.0",
+        config_hash="x",
+        hosts=[host_a, host_b],
+        models=models,
+    )
+
+
+def test_repository_same_model_on_two_hosts_stays_distinct() -> None:
+    """Saving one run with the same model on two servers must persist BOTH rows —
+    the second host must not overwrite the first (regression for host-unaware keys)."""
+    repo = BenchmarkRepository(_TMP_DB)
+    try:
+        repo.save_run(_two_host_run("twohost"))
+
+        rows = repo.compare_models(run_id="twohost")
+        by_host = {m["host_name"]: m for m in rows}
+        assert sorted(by_host) == ["hA", "hB"]
+        # Each host keeps its own score and its own plugin aggregate.
+        assert by_host["hA"]["overall_score"] == 0.9
+        assert by_host["hB"]["overall_score"] == 0.2
+        assert by_host["hA"]["plugins"][0]["score"] == 0.9
+        assert by_host["hB"]["plugins"][0]["score"] == 0.2
+
+        models_rows = repo._conn.execute(
+            "SELECT host_name, COUNT(*) AS n FROM models WHERE run_id='twohost' GROUP BY host_name"
+        ).fetchall()
+        assert {r["host_name"] for r in models_rows} == {"hA", "hB"}
+
+        cases = repo.cases_for_run("twohost")
+        assert sorted(c["host_name"] for c in cases) == ["hA", "hB"]
     finally:
         repo.close()
 
@@ -553,3 +616,70 @@ def test_api_get_plugin_returns_source() -> None:
 
         missing = client.get("/api/plugins/nope")
         assert missing.status_code == 404
+def test_repository_migrates_legacy_schema_to_host_identity() -> None:
+    """A pre-host DB (keyed by model name only) is rebuilt so plugin/case rows are
+    backfilled with the model's host and the new unique key is host-aware."""
+    import sqlite3
+    import tempfile
+
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE runs (run_id TEXT PRIMARY KEY, timestamp TEXT, app_version TEXT,
+                           config_hash TEXT, hosts TEXT);
+        CREATE TABLE models (id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL,
+                             host_name TEXT, model_name TEXT NOT NULL, model_digest TEXT,
+                             max_context_tokens INTEGER, completion_tokens_total INTEGER DEFAULT 0,
+                             cases_run INTEGER DEFAULT 0, errors INTEGER DEFAULT 0,
+                             latency_p50_ms REAL, latency_p95_ms REAL,
+                             time_to_first_token_p50_ms REAL, tokens_per_second REAL,
+                             overall_score REAL, UNIQUE(run_id, model_name));
+        CREATE TABLE plugins (id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL,
+                              model_name TEXT NOT NULL, plugin_id TEXT NOT NULL,
+                              total_cases INTEGER DEFAULT 0, successful_cases INTEGER DEFAULT 0,
+                              failed_cases INTEGER DEFAULT 0, skipped_cases INTEGER DEFAULT 0,
+                              score REAL, metrics TEXT, UNIQUE(run_id, model_name, plugin_id));
+        CREATE TABLE cases (id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL,
+                            model_name TEXT NOT NULL, plugin_id TEXT NOT NULL, case_id TEXT NOT NULL,
+                            passed INTEGER, score REAL, response_text TEXT, error TEXT,
+                            total_ms REAL, time_to_first_token_ms REAL,
+                            tokens_per_second REAL, prompt_tokens INTEGER, completion_tokens INTEGER,
+                            attempt INTEGER DEFAULT 1, raw_response TEXT,
+                            UNIQUE(run_id, model_name, plugin_id, case_id, attempt));
+        CREATE TABLE plugin_options (plugin_id TEXT PRIMARY KEY, options TEXT);
+        CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
+        INSERT INTO runs (run_id, timestamp, app_version, config_hash, hosts)
+            VALUES ('oldrun', '2026-01-01T00:00:00Z', '0.1.0', 'abc', '[]');
+        INSERT INTO models (run_id, host_name, model_name, overall_score)
+            VALUES ('oldrun', 'A', 'qwen3.5:0.8b', 0.7);
+        INSERT INTO plugins (run_id, model_name, plugin_id, score)
+            VALUES ('oldrun', 'qwen3.5:0.8b', 'smoke', 0.7);
+        INSERT INTO cases (run_id, model_name, plugin_id, case_id, passed)
+            VALUES ('oldrun', 'qwen3.5:0.8b', 'smoke', 'c1', 1);
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    try:
+        repo = BenchmarkRepository(path)
+        try:
+            assert _uses_host_identity(repo._conn) is True
+            rows = repo.compare_models(run_id="oldrun")
+            assert rows[0]["host_name"] == "A"
+            assert {p["plugin_id"] for p in rows[0]["plugins"]} == {"smoke"}
+            plug = repo._conn.execute(
+                "SELECT host_name FROM plugins WHERE run_id='oldrun'"
+            ).fetchone()
+            assert plug["host_name"] == "A"
+            case = repo._conn.execute(
+                "SELECT host_name FROM cases WHERE run_id='oldrun'"
+            ).fetchone()
+            assert case["host_name"] == "A"
+        finally:
+            repo.close()
+    finally:
+        os.unlink(path)
