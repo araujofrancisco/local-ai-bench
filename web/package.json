@@ -9,7 +9,7 @@
     "test:pages": "node scripts/test-pages.mjs"
   },
   "dependencies": {
-    "astro": "^7.1.1"
+    "astro": "^7.2.8"
   },
   "devDependencies": {
     "jsdom": "^24.0.0"
